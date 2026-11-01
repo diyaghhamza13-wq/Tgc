@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#090e18"><title>WeCAD | Digital Dental Design</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app-shell">
+<aside class="sidebar" id="sidebar">
+  <a class="brand" href="#" data-page="home"><span class="brand-mark">W</span><span><b>WeCAD</b><small>DIGITAL DENTISTRY</small></span></a>
+  <div class="side-label">MAIN MENU</div>
+  <nav id="navigation">
+    <button class="nav-link active" data-page="home"><span>⌂</span> Home</button>
+    <button class="nav-link" data-page="dashboard"><span>▦</span> Dashboard</button>
+    <button class="nav-link" data-page="profile"><span>♙</span> My Profile</button>
+    <button class="nav-link" data-page="orders"><span>▤</span> Orders &amp; Files</button>
+    <button class="nav-link" data-page="messages"><span>✉</span> Messages <i class="nav-dot"></i></button>
+    <button class="nav-link" data-page="new-order"><span>＋</span> New Order</button>
+    <button class="nav-link" data-page="payments"><span>＄</span> Payments</button>
+    <button class="nav-link" data-page="prices"><span>◇</span> Price List</button>
+    <button class="nav-link" data-page="about"><span>ⓘ</span> About Us</button>
+  </nav>
+  <div class="sidebar-bottom"><div class="support-card"><span class="support-icon">✦</span><b>Need assistance?</b><p>Our team is here to help with your digital orders.</p><button class="btn btn-outline btn-small" data-page="messages">Contact Support</button></div><small class="muted">© 2026 WeCAD</small></div>
+</aside>
+<div class="main-area">
+<header class="topbar"><button class="icon-btn mobile-menu" id="menuToggle" aria-label="Open menu">☰</button><div class="breadcrumb">Workspace <span>/</span> <b id="crumb">Home</b></div><div class="top-actions"><button class="icon-btn" title="Notifications" id="notificationBtn">♧<i class="tiny-dot"></i></button><button class="user-chip" data-page="profile"><span class="avatar">U</span><span><b>My Account</b><small>Client workspace</small></span><span>⌄</span></button></div></header>
+<main id="content" class="content"></main>
+<footer class="footer"><span>© 2026 WeCAD. Professional Digital Dental Design.</span><span>Precision <i>·</i> Technology <i>·</i> Excellence</span></footer>
+</div>
+</div>
+<div class="toast" id="toast" role="status"></div>
+<div class="modal-backdrop" id="modal"><div class="modal"><button class="modal-close" id="modalClose">×</button><div id="modalBody"></div></div></div>
+<script src="app.js"></script>
+</body></html>
