@@ -67,6 +67,9 @@ export default function LabAccess() {
       <Pressable onPress={() => router.push('/(auth)/register')} style={{ alignSelf: 'center', padding: 12 }} accessibilityRole="link">
         <Text style={{ color: colors.gold, fontWeight: '700' }}>{t('auth.registerLab')}</Text>
       </Pressable>
+      <Pressable onPress={() => router.push('/about')} style={{ alignSelf: 'center', padding: 8 }} accessibilityRole="link">
+        <Text style={{ color: colors.muted, fontSize: 13 }}>{t('set.aboutDev')}</Text>
+      </Pressable>
     </Screen>
   );
 }

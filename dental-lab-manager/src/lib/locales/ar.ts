@@ -144,6 +144,7 @@ export const ar: Record<TKey, string> = {
   'set.workflowNote': 'تُطبّق التغييرات على الطلبات الجديدة. الطلبات الحالية تحتفظ بسير عملها.', 'set.sortOrder': 'الترتيب',
   'set.category': 'الفئة', 'set.pinChanged': 'تم تغيير الرمز', 'set.pinReset': 'تمت إعادة تعيين الرمز — أبلغ العامل بالرمز الجديد',
   'set.lastLogin': 'آخر دخول', 'set.newSystem': 'نظام جديد', 'set.lab.code': 'كود المختبر', 'set.app': 'التطبيق',
+  'set.aboutDev': 'حول صانع التطبيق',
   'set.version': 'الإصدار', 'set.deadlineScan': 'فحص المواعيد الآن', 'set.scanDone': 'تم إرسال {n} تذكير',
   'perm.cases.view_all': 'عرض جميع طلبات المختبر',
   'perm.cases.create': 'إنشاء طلبات ومرضى جدد',

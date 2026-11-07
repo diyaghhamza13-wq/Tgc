@@ -142,6 +142,7 @@ export const en = {
   'set.workflowNote': 'Changes apply to new cases. Existing cases keep their workflow.', 'set.sortOrder': 'Order',
   'set.category': 'Category', 'set.pinChanged': 'PIN changed', 'set.pinReset': 'PIN reset — share the new PIN with the employee',
   'set.lastLogin': 'Last login', 'set.newSystem': 'New system', 'set.lab.code': 'Laboratory code', 'set.app': 'Application',
+  'set.aboutDev': 'About the app developer',
   'set.version': 'Version', 'set.deadlineScan': 'Check deadlines now', 'set.scanDone': '{n} reminder(s) sent',
   'perm.cases.view_all': 'View every case of the laboratory',
   'perm.cases.create': 'Create new cases and patients',

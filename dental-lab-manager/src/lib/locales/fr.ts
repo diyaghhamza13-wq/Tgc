@@ -144,6 +144,7 @@ export const fr: Record<TKey, string> = {
   'set.workflowNote': "Les modifications s'appliquent aux nouveaux cas. Les cas existants gardent leur flux.", 'set.sortOrder': 'Ordre',
   'set.category': 'Catégorie', 'set.pinChanged': 'PIN modifié', 'set.pinReset': "PIN réinitialisé — communiquez le nouveau PIN à l'employé",
   'set.lastLogin': 'Dernière connexion', 'set.newSystem': 'Nouveau système', 'set.lab.code': 'Code laboratoire', 'set.app': 'Application',
+  'set.aboutDev': "À propos du créateur de l'application",
   'set.version': 'Version', 'set.deadlineScan': 'Vérifier les échéances', 'set.scanDone': '{n} rappel(s) envoyé(s)',
   'perm.cases.view_all': 'Voir tous les cas du laboratoire',
   'perm.cases.create': 'Créer des cas et des patients',

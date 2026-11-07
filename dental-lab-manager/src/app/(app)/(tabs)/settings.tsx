@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import {
-  Bell, Box, Building2, ChevronLeft, ChevronRight, GitBranch, KeyRound, Layers, LogOut, ScrollText, ShieldCheck, Stethoscope, User, Users,
+  Bell, Box, Info, Building2, ChevronLeft, ChevronRight, GitBranch, KeyRound, Layers, LogOut, ScrollText, ShieldCheck, Stethoscope, User, Users,
 } from 'lucide-react-native';
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
@@ -25,6 +25,7 @@ export default function Settings() {
     { label: t('set.profile'), href: '/(app)/profile', icon: ic(User), show: true },
     { label: t('set.security'), href: '/(app)/profile', icon: ic(KeyRound), show: true },
     { label: t('n.title'), href: '/(app)/notifications', icon: ic(Bell), show: true },
+    { label: t('set.aboutDev'), href: '/about', icon: ic(Info), show: true },
   ];
   const admin: Item[] = [
     { label: t('set.lab'), href: '/(app)/admin/lab', icon: ic(Building2), show: can('lab.settings') },
