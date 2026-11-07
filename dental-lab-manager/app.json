@@ -1,30 +1,48 @@
 {
   "expo": {
-    "name": "dental-lab-manager",
+    "name": "Dental Lab Manager",
     "slug": "dental-lab-manager",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "app.dentallabmanager"
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#050B15",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "app.dentallabmanager"
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/favicon.png",
+      "output": "single",
+      "bundler": "metro"
     },
     "plugins": [
       "expo-router",
       "expo-sharing",
-      "expo-localization"
-    ]
+      "expo-localization",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow access to photos to attach case images and profile pictures."
+        }
+      ]
+    ],
+    "scheme": "dentallabmanager",
+    "backgroundColor": "#050B15",
+    "extra": {
+      "supportsRTL": true
+    },
+    "experiments": {
+      "typedRoutes": false
+    }
   }
 }
