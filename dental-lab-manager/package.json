@@ -41,7 +41,8 @@
     "typecheck": "tsc --noEmit",
     "test:backend": "node scripts/integration-test.mjs",
     "export:web": "expo export --platform web",
-    "seed:demo": "node scripts/seed-demo.mjs"
+    "seed:demo": "node scripts/seed-demo.mjs",
+    "build:pages": "EXPO_BASE_URL=/Tgc/app expo export --platform web && rm -rf ../app && cp -r dist ../app"
   },
   "private": true
 }
