@@ -1,18 +1,32 @@
 import { Redirect } from 'expo-router';
-import React from 'react';
+import React, { useState } from 'react';
 import { View } from 'react-native';
-import { Brand } from '../components/brand';
+import { Intro } from '../components/Intro';
 import { Backdrop, Loading } from '../components/ui';
 import { useAuth } from '../lib/auth';
 
-/** Splash: restores the session, then routes to the app or the login flow. */
+// The intro plays once per app launch, not on every return to "/".
+let introPlayed = false;
+
+/** Splash: animated intro while the session is restored, then route on. */
 export default function Splash() {
   const { loading, session, me } = useAuth();
+  const [introDone, setIntroDone] = useState(introPlayed);
+
+  if (!introDone) {
+    return (
+      <Intro
+        onDone={() => {
+          introPlayed = true;
+          setIntroDone(true);
+        }}
+      />
+    );
+  }
   if (loading) {
     return (
       <Backdrop>
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 30 }}>
-          <Brand />
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
           <Loading />
         </View>
       </Backdrop>
