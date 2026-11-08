@@ -25,6 +25,7 @@ export default function Settings() {
     { label: t('set.profile'), href: '/(app)/profile', icon: ic(User), show: true },
     { label: t('set.security'), href: '/(app)/profile', icon: ic(KeyRound), show: true },
     { label: t('n.title'), href: '/(app)/notifications', icon: ic(Bell), show: true },
+    { label: t('set.privacy'), href: '/privacy', icon: ic(ShieldCheck), show: true },
     { label: t('set.aboutDev'), href: '/about', icon: ic(Info), show: true },
   ];
   const admin: Item[] = [

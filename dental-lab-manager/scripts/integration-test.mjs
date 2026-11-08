@@ -356,6 +356,34 @@ async function main() {
   const { error: lastAdmin } = await admin.from('employees').update({ status: 'inactive' }).eq('id', adminRow.id);
   check('last administrator cannot be deactivated', !!lastAdmin && lastAdmin.message.includes('administrator'), lastAdmin?.message);
 
+  section('11. Account & laboratory deletion (store requirement)');
+  const recToken = (await rec.auth.getSession()).data.session.access_token;
+  const badPinDel = await fn('manage-employee', { action: 'delete_my_account', pin: '000000' }, recToken);
+  check('account deletion requires the correct PIN', badPinDel.status === 403, badPinDel.body);
+  const delMe = await fn('manage-employee', { action: 'delete_my_account', pin: PIN }, recToken);
+  check('employee deletes their own account', delMe.status === 200, delMe.body);
+  const recLogin = await fn('employee-login', { lab_code: LAB, employee_code: 'REC01', pin: PIN });
+  check('deleted account can no longer log in', recLogin.status === 401, recLogin.body);
+  const { data: caseStill } = await admin.from('cases').select('id, created_by').eq('id', caseId).single();
+  check("lab data survives an employee's deletion", caseStill?.id === caseId && caseStill.created_by === null, caseStill);
+  const otherToken = (await other.auth.getSession()).data.session.access_token;
+  const lastAdminDel = await fn('manage-employee', { action: 'delete_my_account', pin: PIN }, otherToken);
+  check('last administrator cannot delete only their account', lastAdminDel.status === 409 && lastAdminDel.body.error === 'last_admin', lastAdminDel.body);
+  const cadDelLab = await fn('manage-employee', { action: 'delete_lab', pin: PIN, lab_code: LAB }, cadToken);
+  check('non-admin cannot delete the laboratory', cadDelLab.status === 403, cadDelLab.body);
+  const wrongCode = await fn('manage-employee', { action: 'delete_lab', pin: PIN, lab_code: 'WRONG' }, adminToken);
+  check('lab deletion requires typing the lab code', wrongCode.status === 400 && wrongCode.body.error === 'lab_code_mismatch', wrongCode.body);
+  const delLab = await fn('manage-employee', { action: 'delete_lab', pin: PIN, lab_code: LAB }, adminToken);
+  check('administrator deletes the whole laboratory', delLab.status === 200, delLab.body);
+  const { data: gone } = await anon.rpc('get_lab_login_info', { p_code: LAB });
+  check('deleted laboratory no longer exists', gone === null);
+  const ghost = await fn('employee-login', { lab_code: LAB, employee_code: 'ADMIN01', pin: PIN });
+  check('its accounts can no longer log in', ghost.status === 401, ghost.body);
+  const { error: dlGone } = await other.storage.from('case-files').download(path);
+  check('its files are gone', !!dlGone);
+  const delLab2 = await fn('manage-employee', { action: 'delete_lab', pin: PIN, lab_code: LAB2 }, otherToken);
+  check('second test laboratory cleaned up', delLab2.status === 200, delLab2.body);
+
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed ? 1 : 0);
 }

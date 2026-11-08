@@ -70,6 +70,9 @@ export default function LabAccess() {
       <Pressable onPress={() => router.push('/about')} style={{ alignSelf: 'center', padding: 8 }} accessibilityRole="link">
         <Text style={{ color: colors.muted, fontSize: 13 }}>{t('set.aboutDev')}</Text>
       </Pressable>
+      <Pressable onPress={() => router.push('/privacy')} style={{ alignSelf: 'center', padding: 4 }} accessibilityRole="link">
+        <Text style={{ color: colors.faint, fontSize: 12 }}>{t('set.privacy')}</Text>
+      </Pressable>
     </Screen>
   );
 }

@@ -1,19 +1,21 @@
 import * as ImagePicker from 'expo-image-picker';
-import { Building2, Camera } from 'lucide-react-native';
+import { Building2, Camera, Trash2 } from 'lucide-react-native';
 import React, { useEffect, useState } from 'react';
 import { Image, Pressable, Text, View } from 'react-native';
 import { useFeedback } from '../../../components/feedback';
+import { useRouter } from 'expo-router';
 import { Button, Card, Field, KV, Screen, SectionTitle, Toggle } from '../../../components/ui';
 import { useAuth } from '../../../lib/auth';
 import { uploadLabAsset } from '../../../lib/files';
 import { useI18n } from '../../../lib/i18n';
-import { errorCode, publicAssetUrl, supabase, unwrap } from '../../../lib/supabase';
+import { callFunction, errorCode, publicAssetUrl, supabase, unwrap } from '../../../lib/supabase';
 import { colors, radius } from '../../../lib/theme';
 
 /** Laboratory profile + notification / workflow settings. */
 export default function LabSettings() {
   const { t, tx } = useI18n();
-  const { me, reloadMe, can } = useAuth();
+  const { me, reloadMe, can, logout } = useAuth();
+  const router = useRouter();
   const fb = useFeedback();
   const lab = me?.lab;
   const [f, setF] = useState({ name: '', phone: '', email: '', address: '', city: '', country: '' });
@@ -105,6 +107,35 @@ export default function LabSettings() {
         />
         <Text style={{ color: colors.muted, fontSize: 12, marginTop: 8 }}>pg_cron · hourly</Text>
       </Card>
+      {can('employees.manage') ? (
+        <Card style={{ borderColor: colors.error }}>
+          <SectionTitle icon={<Trash2 color={colors.error} size={20} />}>{t('set.dangerZone')}</SectionTitle>
+          <Text style={{ color: colors.muted, marginBottom: 12 }}>{t('set.deleteLabHint')}</Text>
+          <Button
+            variant="danger"
+            title={t('set.deleteLab')}
+            loading={busy === 'deleteLab'}
+            onPress={async () => {
+              const code = await fb.prompt({ title: t('set.deleteLab'), message: t('set.deleteLabHint'), danger: true, confirmLabel: t('c.next'), input: { label: `${t('set.typeLabCode')} (${lab.code})`, required: true } });
+              if (!code) return;
+              if (code.trim().toUpperCase() !== lab.code) return fb.toast(t('err.lab_code_mismatch'), 'error');
+              const pin = await fb.prompt({ title: t('set.deleteLab'), danger: true, confirmLabel: t('c.delete'), input: { label: t('auth.pin'), required: true, keyboard: 'number-pad', secure: true } });
+              if (!pin) return;
+              setBusy('deleteLab');
+              try {
+                await callFunction('manage-employee', { action: 'delete_lab', lab_code: code, pin }, true);
+                fb.toast(t('set.labDeleted'));
+                await logout();
+                router.replace('/(auth)/lab');
+              } catch (e) {
+                fb.toast(tx('err', errorCode(e)), 'error');
+              } finally {
+                setBusy(null);
+              }
+            }}
+          />
+        </Card>
+      ) : null}
     </Screen>
   );
 }

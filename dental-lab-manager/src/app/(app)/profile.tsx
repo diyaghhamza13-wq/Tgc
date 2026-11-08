@@ -1,6 +1,6 @@
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
-import { Camera, KeyRound, LogOut } from 'lucide-react-native';
+import { Camera, KeyRound, LogOut, Trash2 } from 'lucide-react-native';
 import React, { useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { useFeedback } from '../../components/feedback';
@@ -107,6 +107,30 @@ export default function Profile() {
               setPins({ current: '', next: '', confirm: '' });
             }, t('set.pinChanged'))
           }
+        />
+      </Card>
+      <Card style={{ borderColor: colors.error }}>
+        <SectionTitle icon={<Trash2 color={colors.error} size={20} />}>{t('set.dangerZone')}</SectionTitle>
+        <Text style={{ color: colors.muted, marginBottom: 12 }}>{t('set.deleteAccountHint')}</Text>
+        <Button
+          variant="danger"
+          title={t('set.deleteAccount')}
+          loading={busy === 'delete'}
+          onPress={async () => {
+            const pin = await fb.prompt({ title: t('set.deleteAccount'), message: t('set.deleteAccountHint'), danger: true, confirmLabel: t('c.delete'), input: { label: t('auth.pin'), required: true, keyboard: 'number-pad', secure: true } });
+            if (!pin) return;
+            setBusy('delete');
+            try {
+              await callFunction('manage-employee', { action: 'delete_my_account', pin }, true);
+              fb.toast(t('set.accountDeleted'));
+              await logout();
+              router.replace('/(auth)/lab');
+            } catch (e) {
+              fb.toast(tx('err', errorCode(e)), 'error');
+            } finally {
+              setBusy(null);
+            }
+          }}
         />
       </Card>
       <Button
