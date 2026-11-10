@@ -19,6 +19,7 @@
     "expo-sharing": "~58.0.22",
     "expo-splash-screen": "~58.0.13",
     "expo-status-bar": "~58.0.4",
+    "expo-system-ui": "~58.0.7",
     "expo-updates": "~58.0.21",
     "lucide-react-native": "^1.70.0",
     "react": "19.3.0",
@@ -42,8 +43,7 @@
     "typecheck": "tsc --noEmit",
     "test:backend": "node scripts/integration-test.mjs",
     "export:web": "expo export --platform web",
-    "seed:demo": "node scripts/seed-demo.mjs",
-    "build:pages": "EXPO_BASE_URL=/Tgc/app expo export --platform web && rm -rf ../app && cp -r dist ../app"
+    "seed:demo": "node scripts/seed-demo.mjs"
   },
   "private": true
 }

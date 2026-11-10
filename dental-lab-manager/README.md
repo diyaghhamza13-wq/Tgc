@@ -158,12 +158,3 @@ QC reject → rework → QC pass → delivery, as the matching employees, with n
 - **No offline mode.** Without a connection the app shows a network error and does not save, so nothing is
   silently lost.
 - 4-digit PINs are allowed. The lockout limits guessing, but 6 digits are recommended.
-
-## 7. Web version on GitHub Pages
-
-A web build connected to the production Supabase project is published from the repository's `app/` folder:
-**https://diyaghhamza13-wq.github.io/Tgc/app/** (GitHub Pages must serve the `main` branch, root folder).
-
-To rebuild it after changes (with `EXPO_PUBLIC_SUPABASE_URL` / `EXPO_PUBLIC_SUPABASE_ANON_KEY` set to the
-production values): `npm run build:pages`, then commit the `app/` folder. The anon key is meant to be public;
-access is controlled by Row Level Security.
