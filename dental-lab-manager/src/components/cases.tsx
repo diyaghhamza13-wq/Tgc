@@ -120,7 +120,11 @@ export function StageTimeline({ stages, currentId }: { stages: Stage[]; currentI
 }
 
 export function HistoryList({ events, employees, stages }: { events: HistoryEvent[]; employees: Record<string, string>; stages: Record<string, string> }) {
-  const { tx, locale } = useI18n();
+  const { t, tx, locale } = useI18n();
+  // employees who deleted their account: the link is cleared (actor_id null) and
+  // stored names are replaced by "Deleted Employee" in the database
+  const deleted = t('c.deletedEmployee');
+  const nameOf = (stored: unknown) => (stored === 'Deleted Employee' ? deleted : (stored as string) ?? '—');
   return (
     <View>
       {events.map((e, i) => {
@@ -138,7 +142,7 @@ export function HistoryList({ events, employees, stages }: { events: HistoryEven
               : e.event_type.startsWith('file')
                 ? `${tx('ev', e.event_type)} · ${(e.data.file_name as string) ?? ''}`
                 : e.event_type === 'assigned'
-                  ? `${tx('ev', 'assigned')} · ${(e.data.stage_name as string) ?? ''} → ${(e.data.employee_name as string) ?? '—'}`
+                  ? `${tx('ev', 'assigned')} · ${(e.data.stage_name as string) ?? ''} → ${nameOf(e.data.employee_name)}`
                   : tx('ev', e.event_type);
         return (
           <View key={e.id} style={styles.hRow}>
@@ -152,7 +156,7 @@ export function HistoryList({ events, employees, stages }: { events: HistoryEven
               <View style={{ flexDirection: 'row', gap: 8 }}>
                 <Text style={styles.hTitle}>{title}</Text>
                 <View style={{ flex: 1 }} />
-                <Text style={styles.hActor}>{e.actor_id ? employees[e.actor_id] ?? '' : ''}</Text>
+                <Text style={styles.hActor}>{e.actor_id ? employees[e.actor_id] ?? deleted : deleted}</Text>
               </View>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                 <Clock size={11} color={colors.muted} />

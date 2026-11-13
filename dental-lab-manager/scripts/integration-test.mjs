@@ -356,6 +356,61 @@ async function main() {
   const { error: lastAdmin } = await admin.from('employees').update({ status: 'inactive' }).eq('id', adminRow.id);
   check('last administrator cannot be deactivated', !!lastAdmin && lastAdmin.message.includes('administrator'), lastAdmin?.message);
 
+  section('12. Employee deletion privacy (anonymization, records preserved)');
+  const tmp = await fn('manage-employee', {
+    action: 'create',
+    employee: { code: 'TMP01', full_name: 'Temporary Person', role_id: role('CAD'), department_id: dep('CAD'), phone: '+0000000', email: 'tmp@example.invalid', pin: PIN },
+  }, adminToken);
+  const tmpId = tmp.body?.employee_id;
+  check('create temporary employee', tmp.status === 201, tmp.body);
+  await admin.from('employees').update({ phone: '+1111111', specialty: 'Temp CAD' }).eq('id', tmpId);
+  const { data: tmpCase, error: tmpCaseErr } = await rec.rpc('create_case', { p: {
+    patient: { full_name: 'Privacy Patient' }, doctor_id: doctor.id, due_date: due,
+    restorations: [{ restoration_type_id: t('ANATOMIC_CROWN'), material_id: m('ZIRCONIA') }], teeth: [{ tooth_number: 11, restoration_index: 0 }],
+  } });
+  check('create case for privacy test', !tmpCaseErr && tmpCase, tmpCaseErr?.message);
+  const { data: tmpStages } = await admin.from('case_workflow_stages').select('id, name').eq('case_id', tmpCase);
+  const cadStage = tmpStages.find((s) => s.name === 'CAD Design').id;
+  const { error: asgErr } = await admin.rpc('assign_stage', { p_stage_id: cadStage, p_employee_id: tmpId });
+  check('admin assigns the stage to the temporary employee', !asgErr, asgErr?.message);
+  const tmpClient = await login(LAB, 'TMP01', PIN);
+  const tmpAuthId = (await tmpClient.auth.getUser()).data.user.id;
+  const { error: tmpStart } = await tmpClient.rpc('start_stage', { p_stage_id: cadStage });
+  const { error: tmpNote } = await tmpClient.rpc('add_case_note', { p_case_id: tmpCase, p_note: 'work note by temp', p_stage_id: cadStage });
+  check('temporary employee works on the case', !tmpStart && !tmpNote, (tmpStart ?? tmpNote)?.message);
+  const { count: empBefore } = await admin.from('employees').select('id', { count: 'exact', head: true });
+  const { count: qcBefore } = await admin.from('quality_control').select('id', { count: 'exact', head: true });
+  const { count: delivBefore } = await admin.from('deliveries').select('id', { count: 'exact', head: true });
+  const { count: histBefore } = await admin.from('case_history').select('id', { count: 'exact', head: true }).eq('case_id', tmpCase);
+  const tmpToken = (await tmpClient.auth.getSession()).data.session.access_token;
+  const tmpDel = await fn('manage-employee', { action: 'delete_my_account', pin: PIN }, tmpToken);
+  check('temporary employee deletes their account', tmpDel.status === 200, tmpDel.body);
+  const { data: tmpRow } = await admin.from('employees').select('id').eq('id', tmpId);
+  check('employee row removed', (tmpRow ?? []).length === 0);
+  const tmpRelog = await fn('employee-login', { lab_code: LAB, employee_code: 'TMP01', pin: PIN });
+  check('deleted employee cannot log in', tmpRelog.status === 401, tmpRelog.body);
+  const { data: oldSession } = await tmpClient.from('cases').select('id');
+  check('old session no longer reads any data', (oldSession ?? []).length === 0);
+  const { data: tmpAudit } = await admin.from('audit_logs').select('old_data, new_data, actor_user_id').eq('table_name', 'employees').eq('record_id', tmpId);
+  const personal = ['full_name', 'code', 'phone', 'email', 'avatar_path', 'specialty', 'auth_user_id', 'last_login_at'];
+  check('audit rows of the employee are kept but anonymized', tmpAudit.length >= 3 && tmpAudit.every((a) => [a.old_data, a.new_data].every((d) => !d || (d.anonymized === true && personal.every((k) => !(k in d))))), tmpAudit);
+  const { data: actorRows } = await admin.from('audit_logs').select('id').eq('actor_user_id', tmpAuthId);
+  check('no audit row keeps the deleted Auth account id', (actorRows ?? []).length === 0);
+  const { data: tmpHist } = await admin.from('case_history').select('event_type, actor_id, notes, data').eq('case_id', tmpCase);
+  const asg = tmpHist.find((h) => h.event_type === 'assigned' && h.data.employee_id === tmpId);
+  check('history shows "Deleted Employee" instead of the name', asg?.data.employee_name === 'Deleted Employee', asg);
+  check('no history row contains the name', !JSON.stringify(tmpHist).includes('Temporary Person'));
+  check('work note kept without author', tmpHist.some((h) => h.event_type === 'note' && h.notes === 'work note by temp' && h.actor_id === null));
+  check('history rows preserved', tmpHist.length === histBefore, { before: histBefore, after: tmpHist.length });
+  const { data: stAfter } = await admin.from('case_workflow_stages').select('status, assigned_employee_id, started_at').eq('id', cadStage).single();
+  check('stage kept (in progress), now unassigned', stAfter.status === 'in_progress' && stAfter.assigned_employee_id === null && stAfter.started_at, stAfter);
+  const { count: empAfter } = await admin.from('employees').select('id', { count: 'exact', head: true });
+  const { count: qcAfter } = await admin.from('quality_control').select('id', { count: 'exact', head: true });
+  const { count: delivAfter } = await admin.from('deliveries').select('id', { count: 'exact', head: true });
+  check('only that employee removed; QC and deliveries untouched', empAfter === empBefore - 1 && qcAfter === qcBefore && delivAfter === delivBefore, { empBefore, empAfter, qcBefore, qcAfter, delivBefore, delivAfter });
+  const cadRelog = await fn('employee-login', { lab_code: LAB, employee_code: 'CAD01', pin: PIN });
+  check('other employees still log in', cadRelog.status === 200, cadRelog.body);
+
   section('11. Account & laboratory deletion (store requirement)');
   const recToken = (await rec.auth.getSession()).data.session.access_token;
   const badPinDel = await fn('manage-employee', { action: 'delete_my_account', pin: '000000' }, recToken);

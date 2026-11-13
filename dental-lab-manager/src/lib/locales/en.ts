@@ -13,7 +13,7 @@ export const en = {
   'c.download': 'Download', 'c.upload': 'Upload', 'c.today': 'Today', 'c.days': 'days', 'c.hours': 'h',
   'c.minutes': 'min', 'c.empty': 'Nothing here yet', 'c.details': 'Details', 'c.noResults': 'No results',
   'c.areYouSure': 'Are you sure?', 'c.offline': 'You are offline. Changes cannot be saved until the connection returns.',
-  'c.tomorrow': 'Tomorrow', 'c.inDays': 'In {n} days', 'c.me': 'Me',
+  'c.tomorrow': 'Tomorrow', 'c.inDays': 'In {n} days', 'c.deletedEmployee': 'Deleted employee', 'c.me': 'Me',
 
   'auth.labAccess': 'Laboratory access', 'auth.labAccessHint': 'Enter your laboratory code to continue',
   'auth.labCode': 'Lab code', 'auth.labNotFound': 'No active laboratory with this code',

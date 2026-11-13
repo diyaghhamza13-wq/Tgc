@@ -15,7 +15,7 @@ export const ar: Record<TKey, string> = {
   'c.download': 'تحميل', 'c.upload': 'رفع', 'c.today': 'اليوم', 'c.days': 'أيام', 'c.hours': 'س',
   'c.minutes': 'د', 'c.empty': 'لا يوجد شيء بعد', 'c.details': 'التفاصيل', 'c.noResults': 'لا توجد نتائج',
   'c.areYouSure': 'هل أنت متأكد؟', 'c.offline': 'أنت غير متصل. لا يمكن حفظ التغييرات حتى يعود الاتصال.',
-  'c.tomorrow': 'غدًا', 'c.inDays': 'بعد {n} أيام', 'c.me': 'أنا',
+  'c.tomorrow': 'غدًا', 'c.inDays': 'بعد {n} أيام', 'c.deletedEmployee': 'عامل محذوف', 'c.me': 'أنا',
 
   'auth.labAccess': 'دخول إلى المختبر', 'auth.labAccessHint': 'أدخل كود المختبر للمتابعة',
   'auth.labCode': 'كود المختبر (Lab Code)', 'auth.labNotFound': 'لا يوجد مختبر نشط بهذا الكود',

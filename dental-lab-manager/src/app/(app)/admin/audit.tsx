@@ -37,7 +37,7 @@ export default function Audit() {
             <Text style={{ color: colors.muted, fontSize: 12 }}>{fmtDate(l.created_at, locale, true)}</Text>
           </Row>
           <View style={{ marginTop: 4 }}>
-            <Text style={{ color: colors.gold, fontSize: 13 }}>{l.actor_employee_id ? data.names[l.actor_employee_id] ?? '—' : 'system'}</Text>
+            <Text style={{ color: colors.gold, fontSize: 13 }}>{l.actor_employee_id ? data.names[l.actor_employee_id] ?? t('c.deletedEmployee') : 'system'}</Text>
             {changed(l) ? <Text style={{ color: colors.muted, fontSize: 12 }}>{changed(l)}</Text> : null}
           </View>
         </Card>

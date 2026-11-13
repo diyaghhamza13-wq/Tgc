@@ -15,7 +15,7 @@ export const fr: Record<TKey, string> = {
   'c.download': 'Télécharger', 'c.upload': 'Importer', 'c.today': "Aujourd'hui", 'c.days': 'jours', 'c.hours': 'h',
   'c.minutes': 'min', 'c.empty': 'Rien pour le moment', 'c.details': 'Détails', 'c.noResults': 'Aucun résultat',
   'c.areYouSure': 'Êtes-vous sûr ?', 'c.offline': 'Vous êtes hors ligne. Les modifications ne peuvent pas être enregistrées.',
-  'c.tomorrow': 'Demain', 'c.inDays': 'Dans {n} jours', 'c.me': 'Moi',
+  'c.tomorrow': 'Demain', 'c.inDays': 'Dans {n} jours', 'c.deletedEmployee': 'Employé supprimé', 'c.me': 'Moi',
 
   'auth.labAccess': 'Accès au laboratoire', 'auth.labAccessHint': 'Saisissez le code du laboratoire',
   'auth.labCode': 'Code laboratoire', 'auth.labNotFound': 'Aucun laboratoire actif avec ce code',

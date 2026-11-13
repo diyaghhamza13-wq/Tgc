@@ -52,6 +52,20 @@ async function removeFolder(admin: any, bucket: string, prefix: string) {
   }
 }
 
+/** Remove a storage folder; if that fails, record it in pending_cleanups. */
+// deno-lint-ignore no-explicit-any
+async function removeFolderOrRecord(admin: any, bucket: string, prefix: string, labId: string) {
+  try {
+    await removeFolder(admin, bucket, prefix);
+  } catch (e) {
+    console.error("storage cleanup failed", bucket, prefix, e);
+    await admin.from("pending_cleanups").upsert(
+      { kind: "storage_prefix", bucket, target: prefix, lab_id: labId, last_error: String((e as Error)?.message ?? e).slice(0, 500) },
+      { onConflict: "bucket,target" },
+    );
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return fail("method_not_allowed", 405);
@@ -103,21 +117,16 @@ Deno.serve(async (req) => {
     if (body.action === "delete_my_account") {
       const check = await verifyMyPin();
       if (!check.ok) return fail(check.error ?? "invalid_credentials", 403);
-      // the last administrator must delete the whole laboratory instead
-      const { data: isAdmin } = await caller.rpc("has_permission", { p_code: "employees.manage" });
-      if (isAdmin) {
-        const { data: adminRoles } = await admin
-          .from("role_permissions").select("role_id").eq("lab_id", me.lab_id).eq("permission_code", "employees.manage");
-        const { data: admins } = await admin
-          .from("employees").select("id").eq("lab_id", me.lab_id).eq("status", "active")
-          .in("role_id", (adminRoles ?? []).map((r: { role_id: string }) => r.role_id));
-        if ((admins ?? []).filter((a: { id: string }) => a.id !== me.id).length === 0) return fail("last_admin", 409);
+      // One transaction: employee row, audit-log/history anonymization and the
+      // Auth account. The last-administrator rule is enforced by the function.
+      const { data: result, error: delError } = await admin.rpc("delete_employee_account", { p_employee_id: me.id });
+      if (delError) {
+        if (delError.message.includes("last_admin")) return fail("last_admin", 409);
+        throw new Error(delError.message);
       }
-      const { data: row } = await admin.from("employees").select("auth_user_id").eq("id", me.id).single();
-      await removeFolder(admin, "lab-assets", `${me.lab_id}/avatars/${me.id}`);
-      const { error: delError } = await admin.from("employees").delete().eq("id", me.id);
-      if (delError) throw new Error(delError.message);
-      if (row?.auth_user_id) await admin.auth.admin.deleteUser(row.auth_user_id);
+      // Profile photos live in a public bucket: remove them now, or record the
+      // failure so it can be retried (the account itself is already deleted).
+      await removeFolderOrRecord(admin, "lab-assets", (result as { avatar_prefix: string }).avatar_prefix, me.lab_id);
       return json({ ok: true });
     }
 
@@ -128,14 +137,11 @@ Deno.serve(async (req) => {
       if ((body.lab_code ?? "").trim().toUpperCase() !== myLabCode) return fail("lab_code_mismatch");
       const check = await verifyMyPin();
       if (!check.ok) return fail(check.error ?? "invalid_credentials", 403);
-      const { data: emps, error: empError } = await admin.from("employees").select("auth_user_id").eq("lab_id", me.lab_id);
-      if (empError) throw new Error(empError.message);
-      // all database rows in one transaction, then the accounts and the stored files
+      // all database rows and Auth accounts in one transaction, then the files
       const { error: delError } = await admin.rpc("delete_laboratory", { p_lab_id: me.lab_id });
       if (delError) throw new Error(delError.message);
-      for (const e of emps ?? []) if (e.auth_user_id) await admin.auth.admin.deleteUser(e.auth_user_id);
-      await removeFolder(admin, "case-files", me.lab_id);
-      await removeFolder(admin, "lab-assets", me.lab_id);
+      await removeFolderOrRecord(admin, "case-files", me.lab_id, me.lab_id);
+      await removeFolderOrRecord(admin, "lab-assets", me.lab_id, me.lab_id);
       return json({ ok: true });
     }
 
