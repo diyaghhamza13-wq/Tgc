@@ -75,23 +75,26 @@ export default function Dashboard() {
         </Pressable>
       </View>
 
+      {/* Name block uses the full card width; the date sits on its own row below,
+          so long names wrap instead of being truncated on narrow phones. */}
       <Card style={styles.welcome}>
-        <Avatar name={me.full_name} path={me.avatar_path} size={64} />
-        <View style={{ flex: 1 }}>
-          <Text style={styles.hello} numberOfLines={2}>
-            {t('dash.welcome', { name: me.full_name })}
-          </Text>
-          <Text style={styles.dep}>{me.department?.name ?? me.role.name}</Text>
-          <Text style={styles.lab} numberOfLines={1}>
-            {me.lab.name} · {me.lab.code}
-          </Text>
-        </View>
-        <View style={styles.dateBox}>
-          <Calendar color={colors.gold} size={20} />
-          <View>
-            <Text style={styles.dateDay}>{now.toLocaleDateString(locale, { weekday: 'long' })}</Text>
-            <Text style={styles.dateText}>{now.toLocaleDateString(locale, { day: '2-digit', month: 'long', year: 'numeric' })}</Text>
+        <View style={styles.welcomeRow}>
+          <Avatar name={me.full_name} path={me.avatar_path} size={56} />
+          <View style={styles.welcomeText}>
+            <Text style={styles.hello}>{t('dash.welcome', { name: me.full_name })}</Text>
+            <Text style={styles.dep}>{me.department?.name ?? me.role.name}</Text>
+            <Text style={styles.lab} numberOfLines={2}>
+              {me.lab.name} · {me.lab.code}
+            </Text>
           </View>
+        </View>
+        <View style={styles.dateRow}>
+          <Calendar color={colors.gold} size={18} />
+          <Text style={styles.dateText}>
+            <Text style={styles.dateDay}>{now.toLocaleDateString(locale, { weekday: 'long' })}</Text>
+            {'  ·  '}
+            {now.toLocaleDateString(locale, { day: '2-digit', month: 'long', year: 'numeric' })}
+          </Text>
         </View>
       </Card>
 
@@ -154,13 +157,15 @@ const styles = StyleSheet.create({
   bell: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   badge: { position: 'absolute', top: 2, end: 0, minWidth: 18, height: 18, borderRadius: 9, backgroundColor: colors.error, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
   badgeText: { color: colors.white, fontSize: 10, fontWeight: '800' },
-  welcome: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  welcome: { gap: 12 },
+  welcomeRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  welcomeText: { flex: 1, minWidth: 0 },
   hello: { color: colors.white, fontSize: 18, fontWeight: '800' },
   dep: { color: colors.text, fontSize: 15, marginTop: 2 },
   lab: { color: colors.muted, fontSize: 12, marginTop: 2 },
-  dateBox: { flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 1, borderColor: colors.borderHi, borderRadius: radius.md, padding: 10 },
-  dateDay: { color: colors.white, fontSize: 13, fontWeight: '700' },
-  dateText: { color: colors.text, fontSize: 12 },
+  dateRow: { flexDirection: 'row', alignItems: 'center', gap: 8, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 10 },
+  dateDay: { color: colors.white, fontWeight: '700' },
+  dateText: { color: colors.text, fontSize: 13, flexShrink: 1 },
   tiles: { flexDirection: 'row', gap: 10 },
   tile: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 16, paddingHorizontal: 4, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: 'rgba(16,30,48,0.9)', minHeight: 112 },
   tileGold: { backgroundColor: colors.gold, borderColor: colors.goldHi, ...glow },
