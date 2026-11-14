@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Checks that the phone (Termux) has everything the backup needs.
 # It touches no database and no backup. Optional: pass your key file to also
-# check that it can encrypt and decrypt:  bash scripts/backup/termux-check.sh ~/dlm-backup-key.txt
+# check that it can encrypt and decrypt, and your Supabase CA certificate file:
+#   bash scripts/backup/termux-check.sh ~/dlm-backup-key.txt ~/supabase-ca.crt
 set -u
 ok=0; bad=0
 pass() { echo "  ✓ $1"; ok=$((ok+1)); }
@@ -35,9 +36,16 @@ if command -v age >/dev/null 2>&1 && command -v age-keygen >/dev/null 2>&1; then
 fi
 
 echo "3. repository scripts"
-for f in scripts/backup/export.mjs scripts/backup/verify.mjs scripts/backup/upload.mjs scripts/backup/check-connection.mjs scripts/backup/restore.mjs; do
+for f in scripts/backup/lib.mjs scripts/backup/export.mjs scripts/backup/verify.mjs scripts/backup/upload.mjs scripts/backup/check-connection.mjs scripts/backup/restore.mjs; do
   [ -f "$f" ] && node --check "$f" 2>/dev/null && pass "$f" || fail "$f missing or invalid (run from tgc/dental-lab-manager)"
 done
+
+echo "4. Supabase CA certificate (for sslmode=verify-full)"
+if [ "${2:-}" != "" ]; then
+  if [ -r "$2" ] && grep -q -- "-----BEGIN CERTIFICATE-----" "$2"; then pass "CA certificate file readable: $2"; else fail "CA certificate $2 missing or not a PEM certificate"; fi
+else
+  echo "  - skipped (pass the CA file as 2nd argument)"
+fi
 
 echo
 [ $bad -eq 0 ] && echo "ALL CHECKS PASSED ($ok)" || echo "$bad CHECK(S) FAILED"

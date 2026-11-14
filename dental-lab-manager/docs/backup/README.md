@@ -16,11 +16,11 @@
 
 | Part | Status |
 |---|---|
-| Scripts: `termux-check.sh`, `check-connection.mjs`, `export.mjs`, `verify.mjs`, `upload.mjs`, `restore.mjs`, `reverse-legacy-file-names.mjs` | Written and **tested locally** (§9) |
+| Scripts: `lib.mjs`, `termux-check.sh`, `check-connection.mjs`, `export.mjs`, `verify.mjs`, `upload.mjs`, `restore.mjs`, `reverse-legacy-file-names.mjs` | Written and **tested locally** (§9) |
 | Read-only backup login `dlm_backup_reader` (§4) | **Proposal**, tested locally; **not created in production** (needs your approval) |
 | Your key pair (§5) | **Planned**: you create it on your phone |
 | Running the scripts in Termux on your phone | **Not yet done**; check with §5 first |
-| Connection from your phone to Supabase (direct or pooler) | **Untested** until §5.5 |
+| Connection from your phone to Supabase (direct or pooler) | **Untested** until §5.6 |
 | Separate backup project (§7) | **Optional**, not created |
 | 30-day retention | **Planned**: manual deletion by you; nothing automatic |
 
@@ -41,9 +41,8 @@ Your Android phone (Termux)
 Claude's cloud session: not involved. It never receives the data, the file, the key or any password.
 ```
 
-**The cloud-session export is no longer a supported method.** `export.mjs` refuses the
-Management API source unless `ALLOW_CLOUD_EXPORT=1` is set on purpose. That mode remains
-in the code only for emergencies; it would expose plaintext to whoever runs it.
+**The cloud-session (Management API) export has been removed from `export.mjs`.**
+Exports run only on your device, over a connection with verified TLS (§5.6).
 
 ## 2. Who holds what
 
@@ -90,7 +89,24 @@ in the code only for emergencies; it would expose plaintext to whoever runs it.
 | `storage.objects` | `SELECT` | The list of stored files (names, sizes), not their contents |
 | Setting `default_transaction_read_only = on` | — | Extra guard: every session starts read-only |
 | `statement_timeout = 5min`, `connection limit 2` | — | Limit runaway or parallel use |
-| Everything else | **None** | No INSERT/UPDATE/DELETE/TRUNCATE, no CREATE/ALTER, no trigger changes, no app functions, no `auth` schema |
+| Login attributes | `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOINHERIT`, member of no role | Declared explicitly; no inherited rights |
+| Everything else | **None** | No INSERT/UPDATE/DELETE/TRUNCATE/TRIGGER, no sequence changes, no CREATE in the database or any schema, no SECURITY DEFINER function, no `auth` or `vault` schema |
+
+**Permission review across every schema the login can reach** (local stack with the full
+app schema, `check-connection.mjs` + inventory, 2026-11-14):
+
+| Schema | What the login can do |
+|---|---|
+| `public` | `SELECT` on all 29 tables; **no** write, `REFERENCES` or `TRIGGER` privilege; **no** executable function (all app functions are granted to app users only) |
+| `storage` | `SELECT` on `storage.objects` only; 20 executable helper functions, **none** `SECURITY DEFINER` (they run with this login's own read-only rights) |
+| `supabase_migrations` | `SELECT` on `schema_migrations` only |
+| `pg_catalog`, `information_schema` (system) | Standard PostgreSQL defaults for every login: read catalog views, change its own session settings (`pg_settings`); **no** `SECURITY DEFINER` function |
+| `auth`, `vault`, `cron`, `net`, `extensions`, `realtime`, `graphql`, others | **No access** (no `USAGE`) |
+| Database | `CONNECT` and `TEMP` (temporary tables for its own session, a PostgreSQL default); **no** `CREATE` |
+| Built-in roles | Not a member of `pg_read_all_stats`, `pg_read_server_files`, `pg_monitor` or any other role |
+
+`check-connection.mjs` and `export.mjs` re-check all of this on every run, so a later
+mistaken `GRANT` is detected before any data is read.
 
 **Security limitations (read before approving)**
 - **It can read everything in the backup**, including the legacy patient names and the
@@ -104,6 +120,8 @@ in the code only for emergencies; it would expose plaintext to whoever runs it.
 - **The password protects it; nothing else does.** Supabase accepts this login from any
   network. Use a long random password, type it only when needed, and rotate it after
   use if you like.
+- Like every PostgreSQL login, it can create **temporary** tables for its own session
+  and change its own session settings. Neither can change stored data.
 - **Not yet verified in production:**
   - that the Supabase `postgres` role may create a login with `BYPASSRLS` (it can
     locally, and its attributes match production);
@@ -111,10 +129,23 @@ in the code only for emergencies; it would expose plaintext to whoever runs it.
 - **Removal:** the bottom of the SQL file removes all privileges and the role.
 
 **Setup, only after your approval:**
-1. Run the SQL file in the app project's SQL editor (Supabase dashboard).
-2. In the same editor, set the password yourself:
-   `alter role dlm_backup_reader password '<long random password>';`
-   Never put it in a file, the chat or the repository.
+1. Run the SQL file in the app project's SQL editor (Supabase dashboard). It contains
+   **no password**.
+2. **Set the password from Termux with `\password`, never in the SQL editor.** The
+   editor may keep statement text in its history, and a statement containing a plain
+   password can reach the server logs. That was shown in the local test: with full
+   statement logging, a plain `PASSWORD '…'` appears in the log, while `\password`
+   leaves only a SCRAM verifier.
+   ```
+   read -rs PGPASSWORD; export PGPASSWORD       # the MAIN database password, typed once
+   psql -X 'postgresql://postgres@<host>:5432/postgres?sslmode=verify-full&sslrootcert=/data/data/com.termux/files/home/supabase-ca.crt'
+   postgres=> \password dlm_backup_reader     -- type the new password twice; nothing is echoed
+   postgres=> \q
+   unset PGPASSWORD
+   ```
+   `psql` turns the new password into a SCRAM-SHA-256 verifier **on the phone** and
+   sends only that. To rotate the password, repeat this step.
+   - With the Session pooler, the admin user is `postgres.<project-ref>`.
 
 ## 5. Preparing the phone (no production data is touched)
 
@@ -140,15 +171,28 @@ age-keygen -o ~/dlm-backup-key.txt && chmod 600 ~/dlm-backup-key.txt
 `cat ~/dlm-backup-key.txt` onto paper or into a password manager. Termux deletes its
 files if the app is uninstalled or its data is cleared.
 
-**5.4 Check the tools (no database involved)**
-```
-bash scripts/backup/termux-check.sh ~/dlm-backup-key.txt
-```
-It checks `psql`, `node` (18+), `age`, `age-keygen`, `git`, the key file's permissions,
-an encrypt/decrypt round trip with your key, and that the scripts are intact. It ends
-with `ALL CHECKS PASSED`.
+**5.4 Get the Supabase CA certificate**
+1. In the app project's dashboard, go to **Database settings → SSL configuration** and
+   download the CA certificate.
+2. Copy it into Termux, for example as `~/supabase-ca.crt`: run `termux-setup-storage`,
+   then `cp ~/storage/downloads/<file>.crt ~/supabase-ca.crt`.
 
-**5.5 Test the connection (metadata only; exports nothing)**
+It is a public certificate, not a secret. It lets `psql` verify that it really talks to
+your Supabase database (`sslmode=verify-full`).
+
+**5.5 Check the tools (no database involved)**
+```
+bash scripts/backup/termux-check.sh ~/dlm-backup-key.txt ~/supabase-ca.crt
+```
+It checks:
+- `psql`, `node` (18+), `age`, `age-keygen`, `git`;
+- the key file's permissions and an encrypt/decrypt round trip with your key;
+- that the scripts are intact;
+- that the CA file is a certificate.
+
+It ends with `ALL CHECKS PASSED`.
+
+**5.6 Test the connection (metadata only; exports nothing)**
 1. Find the connection details in the app project's dashboard → **Connect**.
    - **Direct connection:** host `db.<project-ref>.supabase.co`, port 5432, user
      `dlm_backup_reader`. Free projects give this host an **IPv6 address only.**
@@ -157,13 +201,29 @@ with `ALL CHECKS PASSED`.
 2. Run:
    ```
    read -rs PGPASSWORD; export PGPASSWORD      # type the password; nothing is shown or saved
-   export DB_URL='postgresql://<user>@<host>:5432/postgres?sslmode=require'
+   export DB_URL="postgresql://<user>@<host>:5432/postgres?sslmode=verify-full&sslrootcert=$HOME/supabase-ca.crt"
    node scripts/backup/check-connection.mjs
    ```
-3. It reads only metadata and one yes/no answer per check: login, server version, TLS,
-   read-only default, no write privilege on any table, all 29 tables readable,
-   row-level-security bypass, migration history and file list readable, no access to
-   login accounts. It must end with `READY`.
+   **Rules for `DB_URL`:**
+   - exactly one host;
+   - only `sslmode`, `sslrootcert`, `connect_timeout` and `application_name` are
+     accepted, each at most once;
+   - remote hosts **must** use `sslmode=verify-full` with a readable `sslrootcert`.
+
+   `host`/`hostaddr` overrides, duplicates and libpq environment variables
+   (`PGHOST`, `PGHOSTADDR`, `PGSSLMODE`, …) are refused or ignored.
+3. It reads only metadata from the **established** connection, plus one yes/no answer
+   (are rows visible). It checks:
+   - the real TLS state and version;
+   - that certificate verification was required;
+   - the login's attributes and memberships;
+   - that it cannot create anything, write or add triggers to any table, change any
+     sequence, or run any `SECURITY DEFINER` function, in **every** schema it can reach;
+   - no `auth`/`vault` access;
+   - row-level-security bypass;
+   - all 29 tables, the migration history and the file list are readable.
+
+   It must end with `READY`. It never prints the password or the connection string.
 4. If it reports anything else (for example "cannot write" fails because you used the
    `postgres` login), do not export.
 
@@ -171,15 +231,16 @@ with `ALL CHECKS PASSED`.
 
 ```
 read -rs PGPASSWORD; export PGPASSWORD
-DB_URL='postgresql://<user>@<host>:5432/postgres?sslmode=require' \
+DB_URL="postgresql://<user>@<host>:5432/postgres?sslmode=verify-full&sslrootcert=$HOME/supabase-ca.crt" \
 AGE_RECIPIENT=$(age-keygen -y ~/dlm-backup-key.txt) OUT_DIR=~/dlm-backups \
 node scripts/backup/export.mjs
 unset PGPASSWORD
 ```
 
 **What it does:**
-1. Refuses to run with a login that can write, with `auth` access, without TLS, or with
-   `OUT_DIR` inside the repository.
+1. Runs every check of §5.6 first and refuses on any failure. Its own data connection
+   then re-checks TLS and the login name inside the snapshot. It also refuses an
+   `OUT_DIR` inside the repository. No file is written when anything fails.
 2. Reads everything in **one read-only SELECT**, holding it only in memory.
 3. Encrypts it to your public key and saves `~/dlm-backups/<stamp>-<id>.json.age`, plus
    a manifest with counts and SHA-256 checksums only (no personal data).
@@ -235,7 +296,7 @@ cannot restore.
 age -d -i ~/dlm-backup-key.txt <file>.json.age > ~/backup.json
 node scripts/backup/restore.mjs ~/backup.json <file>.manifest.json > ~/restore.sql
 read -rs PGPASSWORD; export PGPASSWORD               # main database password (postgres login)
-psql 'postgresql://postgres@<host>:5432/postgres?sslmode=require' -v ON_ERROR_STOP=1 -f ~/restore.sql
+psql -X "postgresql://postgres@<host>:5432/postgres?sslmode=verify-full&sslrootcert=$HOME/supabase-ca.crt" -v ON_ERROR_STOP=1 -f ~/restore.sql
 rm ~/backup.json ~/restore.sql; unset PGPASSWORD
 ```
 
@@ -260,8 +321,47 @@ rm ~/backup.json; unset SUPABASE_SERVICE_ROLE_KEY
 
 ## 9. Local test results (2026-11-14)
 
+**Security regression suite** (`scripts/tests/backup-security-local-test.sh`): **49/49
+passed.** It runs against a **temporary local PostgreSQL with real TLS** (test CA,
+server certificate for 127.0.0.2) and against the local Supabase stack.
+- **F1, redirect or weaken:** `?host=`, `?hostaddr=`, duplicate `sslmode`
+  (require then disable) and multiple hosts are refused, both by the connection check
+  and by the export. `PGHOSTADDR`, `PGSSLMODE` and `PGOPTIONS` in the environment are
+  ignored. The removed cloud mode and a privileged login on a non-local host are
+  refused.
+- **F2, verified TLS:**
+  - READY over `verify-full` with the right CA, and the session reports its TLS version;
+  - refused: `sslmode=require`, no `sslmode`, `verify-full` without or with a missing
+    `sslrootcert`;
+  - **no connection** with a certificate from another CA, or with a host name that is
+    not in the certificate.
+- **F3, password:** `\password` through a terminal session stores a SCRAM-SHA-256
+  verifier. With `log_statement=all`, the plain password **never** appeared in the
+  server log, only the verifier. In contrast, a plain `PASSWORD '…'` statement did
+  appear in the log.
+- **F4, redaction:** no password, connection string or upload key appeared in any error,
+  whether from a wrong password in the URL or in `PGPASSWORD`, an unreachable server, an
+  invalid URL or a failed upload.
+- **F5, completeness and privileges:**
+  - export over verified TLS works; the manifest records the login and the TLS version;
+    the backup verifies;
+  - a login **without** row-level-security bypass is reported incomplete, and the export
+    refuses it and writes no file;
+  - also detected: an extra `INSERT`, a `TRIGGER` privilege, an executable
+    `SECURITY DEFINER` function, `vault` access and membership in another role;
+  - after reverting each one: READY again.
+- **F6:** `~/.psqlrc` and `PSQLRC` are ignored; every `psql` call uses `-X`. Uploads
+  refuse `http://` for remote hosts, and refuse credentials or paths in the URL.
+- **Schema hygiene:** with all migrations applied, no `SECURITY DEFINER` function in
+  `public` is executable by everyone, and the Phase 1 internal helpers are not executable
+  by app users.
+- **F7:** a role created from the SQL file has all four attributes false, plus no
+  inherit, bypass RLS and a connection limit of 2. The file declares them explicitly and
+  contains no password. On the full app schema it is READY, and its accessible schemas
+  are exactly `public`, `storage`, `supabase_migrations`.
+
 **Phone-based flow** (`scripts/tests/backup-phone-flow-local-test.sh`, run against the
-local stack exactly as in Termux): **21/21 passed.**
+local stack exactly as in Termux): **21/21 passed** (re-run after the security fixes).
 - **Tool check** passes (tools, key round trip, scripts).
 - **Read-only login**, created from `readonly-role-setup.sql` with the password set
   separately:
@@ -274,7 +374,7 @@ local stack exactly as in Termux): **21/21 passed.**
   - the manifest contains no row data.
 - **The export refuses:**
   - the full `postgres` login;
-  - Management API mode without `ALLOW_CLOUD_EXPORT`;
+  - the removed Management API mode;
   - a remote URL without `sslmode`;
   - an `OUT_DIR` inside the repository.
 - **Verify:**

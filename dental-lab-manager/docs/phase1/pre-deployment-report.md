@@ -1,4 +1,4 @@
-# Phase 1 — Pre-deployment report (v4)
+# Phase 1 — Pre-deployment report (v5)
 
 Checked 2026-11-14.
 - **Production:** read-only aggregate queries only. No row contents, file contents or
@@ -39,7 +39,7 @@ database role or permission has been created or changed. No backup project exist
 | Phone → Supabase connection (direct IPv6 or pooler) | **Untested** until you run the connection check |
 | Separate backup project | **Optional**, not created |
 | 30-day backup retention | **Planned**: a manual task for you |
-| Cloud-session (Management API) export | **Disabled by default** in `export.mjs`; no longer a supported method |
+| Cloud-session (Management API) export | **Removed** from `export.mjs` |
 | Privacy policy v3+, Data Safety v3 | **Drafts**, not published or submitted |
 
 ---
@@ -64,6 +64,7 @@ database role or permission has been created or changed. No backup project exist
 
 | Test | Result |
 |---|---|
+| **Security regression suite** (`backup-security-local-test.sh`, real TLS test server) | **49/49 passed**, see §11 |
 | Phone-based backup flow (`backup-phone-flow-local-test.sh`) | **21/21 passed** |
 | — read-only login: connection check READY; full `postgres` login and wrong password rejected | ✓ |
 | — export saves only an encrypted file and a manifest without row data; refuses the full login, cloud mode, non-TLS remote URL, `OUT_DIR` in the repository | ✓ |
@@ -173,8 +174,8 @@ environment.
 | R8 | Free text can contain patient information. | Medium | UI warnings and policy. |
 | R9 | The Data Safety answers are not verified against Google's current definitions. | Medium | Compare the "verify" rows in Play Console. |
 | R10 | **Your phone becomes the most sensitive point.** It holds the private key and is where you type the read-only password. Malware or an unlocked stolen phone could expose both. | Medium | Screen lock, updated Android, Termux only from F-Droid, no unknown apps; passwords typed with `read -rs`, never stored; rotate the read-only password after use. |
-| R11 | **The read-only login can read everything** (`BYPASSRLS`), including patient names and PIN hashes, from any network. It is protected only by its password. | Medium | Long random password; rotate it; remove the login if unused (removal SQL provided). |
-| R12 | Phone → Supabase connection (IPv6-only direct host, or a custom login through the pooler) and the Termux packages are unverified. | Low–Medium | The connection check reveals it without exporting. |
+| R11 | **The read-only login can read everything** (`BYPASSRLS`), including patient names and PIN hashes, from any network. It is protected only by its password. | Medium | Long random password set with `\password` (never in plain text on the server); rotate it; remove the login if unused (removal SQL provided). Every run re-checks its privileges. |
+| R12 | Phone → Supabase connection (IPv6-only direct host, or a custom login through the pooler), the Termux packages, and **`verify-full` against Supabase's real CA certificate and host names** are unverified. | Low–Medium | The connection check reveals all of it without exporting. If the pooler's certificate does not match its host name, the connection is refused, never downgraded. |
 | R13 | An encrypted copy in Google Drive places encrypted personal data with Google. | Low | Encrypted with your key only. Choose Drive and/or the backup project in the policy's `[[CHOOSE]]`. |
 | R14 | Free backup project pauses after inactivity (if used). | Low | Optional; resume from the dashboard. |
 | R15 | **This session keeps full Management API access** (and a Netlify deploy token) until you remove them; see §10. | Medium | Your decision after reading §10. |
@@ -230,3 +231,54 @@ Personal access tokens).
   applied and verified, then remove and revoke it.
 - If you prefer to apply the migration yourself through the SQL editor, you can remove
   it now. Nothing in the phone-based backup depends on it.
+
+---
+
+## 11. Security review of the backup scripts (findings F1–F7): status
+
+All fixes are repository-only and tested locally (`scripts/tests/backup-security-local-test.sh`,
+49/49).
+
+| # | Finding | Fix | Regression tests |
+|---|---|---|---|
+| F1 | The TLS check read only the URL text: `?host=` override and duplicate `sslmode` bypassed it | New `scripts/backup/lib.mjs`: one host only; allow-list of URL parameters (`sslmode`, `sslrootcert`, `connect_timeout`, `application_name`), each at most once; libpq environment overrides (`PGHOST`, `PGHOSTADDR`, `PGSSLMODE`, `PGOPTIONS`, …) stripped; **the real TLS state is read from the established session** (`pg_stat_ssl`) and re-checked inside the data snapshot | `?host=`, `?hostaddr=`, duplicate `sslmode`, multiple hosts, environment overrides, in both scripts |
+| F2 | `sslmode=require` did not verify the server certificate | Remote hosts require `sslmode=verify-full` and a readable `sslrootcert` (Supabase CA). There is no fallback. | Right CA: READY. Wrong CA, wrong host name: no connection. `require`, no `sslmode`, missing CA file: refused. |
+| F3 | Setting the password in the SQL editor could leave it in plain text | Setup uses `psql -X` + `\password` from Termux, which sends only a SCRAM verifier | With `log_statement=all`: the plain password is absent from the log, only the verifier appears; a plain `PASSWORD '…'` statement does appear (contrast) |
+| F4 | A connection error printed the URL with its password | All errors pass through `redact()` (connection strings, `password=…`, `PGPASSWORD`, upload key); `psql` errors are reduced to their first line | Wrong password (URL or env), unreachable host, invalid URL, failed upload: no secret in any output |
+| F5 | The export did not check that the login sees all rows | Before reading data: row-level-security bypass, rows visible, all public tables readable, no write/`TRIGGER`/sequence/`CREATE`/`SECURITY DEFINER`/`auth`/`vault`/role membership **in every accessible schema**; the data snapshot re-checks TLS and the login | No-bypass login refused (no file written); extra `INSERT`, `TRIGGER`, `SECURITY DEFINER` function, `vault` access, role membership: each detected |
+| F6 | No `psql -X`; uploads accepted `http://` | `-X` on every `psql` call (scripts, tests, docs); uploads require `https://` (plain `http` only for loopback tests), no credentials, paths or redirects | `~/.psqlrc` and `PSQLRC` ignored; remote `http://`, credentials and paths in the URL refused |
+| F7 | Role attributes implicit | `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOINHERIT` declared explicitly | Attributes verified in `pg_roles` after creating the role from the file |
+
+**Found by the new checks, and fixed in the (unapplied) Phase 1 migration:**
+- the new trigger function `_attachments_production_only` is `SECURITY DEFINER` and was
+  executable by everyone, through PostgreSQL's default EXECUTE grant to PUBLIC. The
+  earlier schema-level "revoke by default" cannot remove that default.
+- **Impact:** none in practice, because a trigger function cannot be called directly,
+  and production is not affected because the migration is not applied.
+- **Fix:** the migration now revokes it explicitly. It does the same for the internal
+  `_redacted_path`, and limits `is_legacy_sensitive_file` to app users.
+- **Test:** a regression test asserts that no such function remains.
+
+**Also removed:** the Management API (cloud) export mode.
+
+**Also restricted:** `ALLOW_PRIVILEGED_LOGIN` is accepted only for loopback test
+databases.
+
+**Permission review across all accessible schemas:** see `docs/backup/README.md` §4. In
+short:
+- **read-only access** to `public` (29 tables), `storage.objects` and the migration
+  history;
+- no executable `SECURITY DEFINER` function anywhere;
+- no access to `auth`, `vault`, `cron`, `net`, `extensions` or other schemas;
+- PostgreSQL's standard session-only defaults (temporary tables, session settings).
+
+**Remaining limitations:**
+- The permission review was done on the local stack. Its `public` schema and policies
+  are identical to production, but Supabase's system schemas in production were not
+  compared. The connection check repeats the review on the real database at first use.
+- `verify-full` with Supabase's real certificate (direct host and pooler) is untested
+  until your first connection check.
+- `\password` requires typing the main database password on the phone once.
+- Negative tests prove refusal, not that every refusal has the intended reason. The key
+  ones (`?host=`, duplicates, certificate, row-level-security bypass, SECURITY DEFINER,
+  membership) check the specific message.

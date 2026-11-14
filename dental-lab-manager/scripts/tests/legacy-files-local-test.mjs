@@ -26,7 +26,7 @@ const PIN = fs.readFileSync(PIN_FILE, 'utf8').trim();
 const NAME = 'Fatima_Zahra_Legacy'; // fictional identifying name used in legacy file names
 let failed = 0;
 const check = (n, ok, d) => { if (!ok) failed++; console.log(`  ${ok ? '✓' : '✗'} ${n}${!ok && d !== undefined ? ' — ' + JSON.stringify(d).slice(0, 300) : ''}`); };
-const sql = (q) => execFileSync('psql', [DB_URL, '-At', '-v', 'ON_ERROR_STOP=1', '-c', q]).toString().trim();
+const sql = (q) => execFileSync('psql', ['-X', DB_URL, '-At', '-v', 'ON_ERROR_STOP=1', '-c', q]).toString().trim();
 const sqlJson = (q) => JSON.parse(sql(`select coalesce(json_agg(x), '[]') from (${q}) x`));
 const svc = { apikey: SRK, Authorization: `Bearer ${SRK}` };
 const sha = (b) => crypto.createHash('sha256').update(b).digest('hex');

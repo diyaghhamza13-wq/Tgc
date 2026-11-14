@@ -345,6 +345,10 @@ begin
 end;
 $$;
 
+-- New functions get EXECUTE for PUBLIC by default (the schema-level default
+-- privileges set earlier cannot remove that global default): revoke it.
+revoke execute on function public._attachments_production_only() from public, anon, authenticated;
+
 -- BEFORE INSERT only: existing rows (any category) stay readable and deletable.
 create trigger attachments_production_only
   before insert on public.attachments
@@ -404,6 +408,7 @@ returns boolean language sql immutable set search_path = '' as $$
       or coalesce(lower(substring(p_file_name from '\.([A-Za-z0-9]+)$')), '')
          <> all (array['stl', 'ply', 'obj', '3mf', 'dcm']);
 $$;
+revoke execute on function public.is_legacy_sensitive_file(text, text) from public, anon;
 grant execute on function public.is_legacy_sensitive_file(text, text) to authenticated;
 
 drop policy if exists attachments_select on public.attachments;
@@ -456,6 +461,8 @@ returns text language sql immutable set search_path = '' as $$
          || coalesce('.' || lower(substring(p_path from '\.([A-Za-z0-9]{1,8})$')), '')
   end;
 $$;
+
+revoke execute on function public._redacted_path(text) from public, anon, authenticated;
 
 create or replace function public.redact_legacy_file_names(p_include_sensitive boolean default false)
 returns jsonb language plpgsql security definer set search_path = '' as $$
