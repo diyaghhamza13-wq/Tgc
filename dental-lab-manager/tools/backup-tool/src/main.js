@@ -35,6 +35,17 @@ $('gen').onclick = async () => {
   $('newpub').value = await age.identityToRecipient(id);
   say('genmsg', 'New key pair created in this browser. Save the PRIVATE key now (password manager and paper). It is not stored anywhere and is lost when you close this page.');
 };
+// 1b. Backup Runner token: the token goes to the runner project, only its HASH to production
+$('gentoken').onclick = async () => {
+  const token = `dlmbk1_${hex(crypto.getRandomValues(new Uint8Array(32)))}`;
+  const hash = await sha256hex(new TextEncoder().encode(token));
+  const label = `runner ${new Date().toISOString().slice(0, 10)}`;
+  $('newtoken').value = token;
+  $('tokenhash').value = hash;
+  $('tokensql').value = `select dlm_backup.register_token('${hash}', '${label}');`;
+  say('tokenmsg', 'New token created in this browser. Put the TOKEN into the runner project secret DLM_PROD_BACKUP_TOKEN; run the SQL line in the PRODUCTION SQL editor (it contains only the hash).');
+};
+$('cleartoken').onclick = () => { $('newtoken').value = ''; $('tokenhash').value = ''; $('tokensql').value = ''; say('tokenmsg', 'Cleared.'); };
 $('clearkeys').onclick = () => { $('newpriv').value = ''; $('newpub').value = ''; $('privkey').value = ''; say('genmsg', 'Cleared.'); };
 
 // 2. verify a backup run (+ optional restore SQL)
@@ -53,7 +64,14 @@ $('verify').onclick = async () => {
     if (!r.ok) throw new Error(`mismatch in: ${r.problems.join(', ')}`);
     lastBackup = b;
     $('sqlbtn').disabled = false;
-    say('vermsg', `OK — ${r.tables} tables, ${r.rows} rows, exported ${man.exported_at}. The backup decrypts and matches its manifest.`);
+    // which public keys was this run encrypted to?
+    let who = '';
+    if (Array.isArray(man.recipients)) {
+      const mine = await age.identityToRecipient(identity());
+      const others = man.recipients.filter((x) => x !== mine).length;
+      who = others ? ` WARNING: also encrypted to ${others} other key(s) — check they are yours.` : ' Encrypted to your key only.';
+    }
+    say('vermsg', `OK — ${r.tables} tables, ${r.rows} rows, exported ${man.exported_at}. The backup decrypts and matches its manifest.${who}`, !who.includes('WARNING'));
   } catch (e) {
     say('vermsg', `FAILED — ${e.message}`, false);
   }

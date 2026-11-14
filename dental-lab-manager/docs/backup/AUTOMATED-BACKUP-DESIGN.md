@@ -1,14 +1,13 @@
 # Automated backup — architecture and implementation plan (proposal)
 
-> **Status: Phase 1 implemented in the repository and tested locally (2026-11-14).**
-> Nothing has been created, applied, deployed or changed in production. Every
-> production action listed in §8 needs your explicit approval. The security review,
-> test evidence and the list of unverified costs and dependencies are in
-> [`SECURITY-REVIEW.md`](SECURITY-REVIEW.md).
->
-> **Change from the first draft:** the function no longer connects to Postgres with
-> `SUPABASE_DB_URL` + `SET ROLE`. It never reads the `postgres` password. It calls a
-> `SECURITY DEFINER` snapshot function **owned by the `NOLOGIN` role** (see §3.1).
+> **Status (Phase 1b, 2026-11-14): the architecture below is SUPERSEDED in one key
+> respect.** The backup no longer runs in the production project and no longer uses
+> production's service-role key or `pg_net`. It runs in a separate **Backup Runner**
+> project that reads production only through a token-gated, read-only snapshot and a
+> download-only Storage policy. See [`BACKUP-RUNNER.md`](BACKUP-RUNNER.md) (architecture,
+> setup, token lifecycle) and [`SECURITY-REVIEW.md`](SECURITY-REVIEW.md) (complete review).
+> Encryption, off-site storage, object lock, retention, verification and restore remain
+> as described here. Nothing has been created, applied or deployed.
 >
 > **This supersedes the phone-based procedure:** no Termux, no routine phone
 > operations. The phone-based scripts stay in the repository but are no longer the
@@ -245,6 +244,9 @@ scoped to just-written objects. **Decision at implementation; default (b).**
 
 ## 8. Production actions that would eventually be required (none done)
 
+> **Superseded by Phase 1b:** the files and steps below are historical. Current files and
+> production steps: [`BACKUP-RUNNER.md`](BACKUP-RUNNER.md) §2 and §5.
+
 Each step is a separate approval point. Steps done by you are marked **[you]**.
 
 | # | Action | Type | Notes |
@@ -265,6 +267,9 @@ functions, schema, Vault secrets, role), then delete the function. Off-site obje
 35 days.
 
 ## 9. Implementation (Phase 1, repository only — done)
+
+> **Superseded by Phase 1b:** the files and steps below are historical. Current files and
+> production steps: [`BACKUP-RUNNER.md`](BACKUP-RUNNER.md) §2 and §5.
 | Part | Files |
 |---|---|
 | Edge Function | `supabase/functions/dlm-backup/` (`index.ts`, `deno.json`; `age-encryption@0.3.1`, `aws4fetch@1.0.20`) |

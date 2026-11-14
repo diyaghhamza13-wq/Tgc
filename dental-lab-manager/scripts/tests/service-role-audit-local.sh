@@ -21,7 +21,7 @@ code() { curl -s -o "$W/b" -w '%{http_code}' "$@"; }
 
 echo "== fresh local database + pending backup migration + demo data"
 timeout 600 "$CLI" db reset --local > "$W/reset.log" 2>&1 || { echo "reset failed"; exit 1; }
-psql -X "$DB" -q -v ON_ERROR_STOP=1 -1 -f supabase/migrations-pending/20261114190000_automated_backup.sql >/dev/null || exit 1
+psql -X "$DB" -q -v ON_ERROR_STOP=1 -1 -f supabase/migrations-pending/20261115090000_backup_read_access.sql >/dev/null || exit 1
 ST=$("$CLI" status -o json 2>/dev/null)
 ANON=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["ANON_KEY"])' <<<"$ST")
 SRK=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["SERVICE_ROLE_KEY"])' <<<"$ST")
@@ -57,19 +57,24 @@ check "erases the audit trail over REST" "$(code -X DELETE "${SH[@]}" "$U/rest/v
 check "deletes a stored file" "$(code -X DELETE "${SH[@]}" "$U/storage/v1/object/$OBJ")" 200
 
 echo "== B. who can execute public.dlm_backup_snapshot()"
-check "roles with EXECUTE: owner, postgres, service_role, supabase_admin only" "$(q "select string_agg(rolname,',' order by rolname) from pg_roles where has_function_privilege(oid,'public.dlm_backup_snapshot()','EXECUTE')")" "dlm_backup_reader,postgres,service_role,supabase_admin"
+check "roles with EXECUTE (Phase 1b): owner, postgres, supabase_admin only — no longer service_role" "$(q "select string_agg(rolname,',' order by rolname) from pg_roles where has_function_privilege(oid,'public.dlm_backup_snapshot()','EXECUTE')")" "dlm_backup_reader,postgres,supabase_admin"
 check "anon: GET refused" "$(code "${AH[@]}" "$U/rest/v1/rpc/dlm_backup_snapshot")" 401
 check "anon: POST refused" "$(code -X POST "${AH[@]}" -H 'Content-Type: application/json' -d '{}' "$U/rest/v1/rpc/dlm_backup_snapshot")" 401
-check "no backup RPC is executable by anon or authenticated" "$(q "select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname like 'dlm_backup%' and (has_function_privilege('anon',p.oid,'EXECUTE') or has_function_privilege('authenticated',p.oid,'EXECUTE'))")" 0
+check "backup RPCs executable by anon/authenticated: only the token-checked wrapper (Phase 1b)" "$(q "select string_agg(p.proname, ',') from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname like 'dlm_backup%' and (has_function_privilege('anon',p.oid,'EXECUTE') or has_function_privilege('authenticated',p.oid,'EXECUTE'))")" dlm_backup_runner_snapshot
 check "no anon/authenticated SECURITY DEFINER function in public uses dynamic SQL" "$(q "select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.prosecdef and p.prosrc ~* '\\mexecute\\M' and (has_function_privilege('anon',p.oid,'EXECUTE') or has_function_privilege('authenticated',p.oid,'EXECUTE'))")" 0
-check "service key: snapshot allowed" "$(code "${SH[@]}" "$U/rest/v1/rpc/dlm_backup_snapshot")" 200
+check "service key: snapshot refused (Phase 1b)" "$(code "${SH[@]}" "$U/rest/v1/rpc/dlm_backup_snapshot")" 403
 
 echo "== C. what installing pg_net grants (Supabase event trigger issue_pg_net_access)"
+# Production no longer installs pg_net (Phase 1b); installed here, locally, only to show the grants.
+psql -X "$DB" -q -c "create extension if not exists pg_net" >/dev/null
 check "the grant comes from Supabase's event trigger" "$(q "select count(*) from pg_event_trigger where evtname='issue_pg_net_access'")" 1
 check "anon can EXECUTE net.http_post" "$(q "select has_function_privilege('anon','net.http_post(text,jsonb,jsonb,jsonb,integer)','EXECUTE')")" t
 check "anon can read and write the request queue (would see the trigger secret)" "$(q "select has_table_privilege('anon','net.http_request_queue','SELECT,INSERT,UPDATE,DELETE')")" t
 check "anon can read and write stored responses" "$(q "select has_table_privilege('anon','net._http_response','SELECT,INSERT,UPDATE,DELETE')")" t
 check "…but schema net is not reachable over the API" "$(code -X POST "${AH[@]}" -H 'Content-Profile: net' -H 'Content-Type: application/json' -d '{"url":"http://127.0.0.1:1/"}' "$U/rest/v1/rpc/http_get")" 406
+TRIP=$(openssl rand -hex 32); q "insert into dlm_backup.runner_tokens(token_hash,label,expires_at) values (encode(extensions.digest('dlmbk1_$TRIP','sha256'),'hex'),'tripwire',now()+interval '1 day')" >/dev/null
+check "tripwire: while pg_net is installed the snapshot refuses to run (backup role could write to net)" "$(code "${AH[@]}" -H "x-dlm-backup-token: dlmbk1_$TRIP" "$U/rest/v1/rpc/dlm_backup_runner_snapshot"; grep -o backup_role_can_write "$W/b")" "400backup_role_can_write"
+psql -X "$DB" -q -c "drop extension pg_net" -c "delete from dlm_backup.runner_tokens where label='tripwire'" >/dev/null
 
 echo "== D. PROTOTYPE: token-gated read-only access without the service-role key"
 TOK=$(openssl rand -hex 32)

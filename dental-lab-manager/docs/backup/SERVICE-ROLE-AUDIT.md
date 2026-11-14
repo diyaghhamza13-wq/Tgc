@@ -1,5 +1,10 @@
 # Service-role key audit for the automated backup (before any production step)
 
+> **Status:** the recommendation (R2 + D1 + S1) is implemented in Phase 1b. See
+> [`BACKUP-RUNNER.md`](BACKUP-RUNNER.md) and [`SECURITY-REVIEW.md`](SECURITY-REVIEW.md).
+> Implementation found that the S1 policy must be limited to the download operation
+> (finding B2), because a plain policy also allows signed URLs that outlive revocation.
+
 **Date:** 2026-11-14.
 
 **Scope:** the backup design in `AUTOMATED-BACKUP-DESIGN.md` and `SECURITY-REVIEW.md`

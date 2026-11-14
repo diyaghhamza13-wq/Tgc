@@ -49,6 +49,20 @@ fs.rmSync(kf);
 await page.click('#clearkeys');
 check('"Clear" empties both key fields', (await page.inputValue('#newpriv')) === '' && (await page.inputValue('#newpub')) === '');
 
+// 1b. Backup Runner token: token for the runner, only the hash (and SQL) for production
+await page.click('#gentoken');
+await page.waitForFunction(() => document.querySelector('#newtoken').value.startsWith('dlmbk1_'));
+const tok = await page.inputValue('#newtoken');
+const tokHash = await page.inputValue('#tokenhash');
+const tokSql = await page.inputValue('#tokensql');
+check('runner token: 256-bit random, expected format', /^dlmbk1_[0-9a-f]{64}$/.test(tok));
+check('runner token: shown hash is its SHA-256; the production SQL line holds the hash, never the token', tokHash === sha(tok) && tokSql.includes(tokHash) && !tokSql.includes(tok) && /^select dlm_backup\.register_token\('[0-9a-f]{64}', 'runner \d{4}-\d{2}-\d{2}'\);$/.test(tokSql), tokSql);
+await page.click('#gentoken');
+await page.waitForFunction((t) => document.querySelector('#newtoken').value !== t, tok);
+check('runner token: a second click gives a different token', (await page.inputValue('#newtoken')) !== tok);
+await page.click('#cleartoken');
+check('runner token: "Clear" empties the fields', (await page.inputValue('#newtoken')) === '' && (await page.inputValue('#tokensql')) === '');
+
 // 2. verify a real run + restore SQL
 await page.setInputFiles('#manifest', path.join(TF, 'manifest.json'));
 await page.setInputFiles('#dbfile', path.join(TF, 'db.json.age'));
@@ -62,6 +76,7 @@ await page.click('#verify');
 await page.waitForFunction(() => document.querySelector('#vermsg').textContent.startsWith('OK') || document.querySelector('#vermsg').textContent.startsWith('FAILED'));
 const msg = await page.textContent('#vermsg');
 check('the real backup decrypts and matches its manifest (29 tables)', /^OK — 29 tables/.test(msg), msg);
+check('the page confirms the run is encrypted to your key only (public keys listed in the manifest)', msg.includes('Encrypted to your key only.'), msg);
 const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#sqlbtn')]);
 const sqlBytes = fs.readFileSync(await dl.path());
 check('restore.sql from the browser is identical to the Node restore.mjs output', sha(sqlBytes) === expected.restoreSqlSha256);

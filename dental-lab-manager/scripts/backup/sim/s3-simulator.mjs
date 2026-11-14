@@ -7,7 +7,7 @@
  *  - AWS Signature V4 verification (header auth), clock-skew check, and
  *    x-amz-content-sha256 verification against the received body
  *    (UNSIGNED-PAYLOAD refused for uploads);
- *  - per-key permissions: put | get | head | list | delete | admin;
+ *  - per-key permissions: put | get | head | list (incl. ListObjectVersions) | delete | admin;
  *  - versioning (a PUT to an existing key creates a new version);
  *  - If-None-Match: * (412 if the key already exists);
  *  - object lock in COMPLIANCE mode: each version is retained until
@@ -122,6 +122,20 @@ const server = http.createServer((req, res) => {
     if (!key && req.method === 'PUT') { if (!cfg.keys[keyId].perms.includes('admin')) return deny('PutBucketConfig'); ok('PutBucketConfig'); return send(res, 200); }
     if (!key && req.method === 'GET') {
       if (!can(keyId, 'list')) return deny(url.searchParams.has('versions') ? 'ListObjectVersions' : 'ListObjects');
+      if (url.searchParams.has('versions')) {
+        ok('ListObjectVersions');
+        const prefix = url.searchParams.get('prefix') ?? '';
+        const xml = [];
+        for (const [k, vs] of store) {
+          if (!k.startsWith(prefix)) continue;
+          // S3 order: newest first per key
+          for (const v of [...vs].reverse()) {
+            const tag = v.deleteMarker ? 'DeleteMarker' : 'Version';
+            xml.push(`<${tag}><Key>${k}</Key><VersionId>${v.versionId}</VersionId><LastModified>${new Date(v.created).toISOString()}</LastModified>${v.deleteMarker ? '' : `<Size>${v.body.length}</Size><ETag>"${v.md5}"</ETag>`}</${tag}>`);
+          }
+        }
+        return send(res, 200, `<?xml version="1.0"?><ListVersionsResult>${xml.join('')}</ListVersionsResult>`);
+      }
       ok('List');
       const items = [...store.keys()].filter((k) => current(k)).map((k) => `<Contents><Key>${k}</Key><Size>${current(k).body.length}</Size></Contents>`).join('');
       return send(res, 200, `<?xml version="1.0"?><ListBucketResult>${items}</ListBucketResult>`);

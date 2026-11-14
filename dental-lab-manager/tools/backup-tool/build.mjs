@@ -40,6 +40,18 @@ button:disabled{opacity:.4}.ok{color:#5fd38d}.bad{color:#ff6b6b}.note{color:#9fb
 <textarea id="newpriv" readonly></textarea>
 </section>
 
+<h2>1b. Create a Backup Runner token (once a year, or to rotate)</h2>
+<section>
+<button id="gentoken">Create a new runner token</button> <button id="cleartoken">Clear</button>
+<p id="tokenmsg" class="note"></p>
+<label>TOKEN — goes ONLY into the runner project's function secret <code>DLM_PROD_BACKUP_TOKEN</code> (secret: never into production, never to anyone):</label>
+<textarea id="newtoken" readonly></textarea>
+<label>SHA-256 hash of the token (not secret):</label>
+<textarea id="tokenhash" readonly></textarea>
+<label>SQL line for the PRODUCTION SQL editor (registers the hash; valid 365 days):</label>
+<textarea id="tokensql" readonly></textarea>
+</section>
+
 <h2>2. Verify a backup (quarterly drill) and, if needed, create the restore SQL</h2>
 <section>
 <label>manifest.json of the run:</label><input type="file" id="manifest" accept=".json">
