@@ -8,6 +8,15 @@
 - `tools/backup-tool/` → `docs/backup/tools/backup-tool.html`
 - the simulator and tests
 
+> **Superseded in part by [`SERVICE-ROLE-AUDIT.md`](SERVICE-ROLE-AUDIT.md) (2026-11-14):**
+> - Supabase documents that every Edge Function receives `SUPABASE_DB_URL` and the
+>   service and secret keys. Not *reading* them gives no protection against a
+>   **compromised** function (§2 and S3 below).
+> - Functions run in the region closest to the caller unless `x-region` is sent
+>   (S6 "same region" is not guaranteed).
+> - The audit recommends a separate runner project with token-gated, read-only
+>   access before any production step.
+
 **Nothing here has been applied, deployed or created in production.** Statements about
 Supabase, Backblaze or Cloudflare behaviour are **unverified** until checked against
 their current documentation (see §8).
