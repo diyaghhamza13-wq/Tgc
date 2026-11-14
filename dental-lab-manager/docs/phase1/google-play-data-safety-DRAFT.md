@@ -66,7 +66,7 @@
 | Type | Answer | Req./opt. | Purposes | Evidence | Notes |
 |---|---|---|---|---|---|
 | Photos | **Collected** | Optional | App functionality | `profile.tsx:41` (profile photo), `admin/lab.tsx:57` (lab logo); `expo-image-picker` gallery only, camera disabled (`app.json`); permission text corrected to "only to set your profile picture and your laboratory logo" | Case photos are rejected by this version. |
-| Videos | **Not collected** by this version | — | — | Upload whitelist: STL/PLY/OBJ/3MF/DCM (`files.ts`, attachments trigger, storage policy) | 1 legacy MP4 remains stored, visible to administrators only. It is left untouched per your instruction. See report §3.4. |
+| Videos | **Not collected** by this version | — | — | Upload whitelist: STL/PLY/OBJ/3MF/DCM (`files.ts`, attachments trigger, storage policy) | 1 legacy MP4 remains stored, visible to administrators only. It is left untouched per your instruction. See report §5.4. |
 
 ### Audio, files, calendar, contacts
 | Type | Answer | Evidence |
@@ -103,7 +103,7 @@
 
 ## Decisions for you
 1. **D1 — Health info:** recommended **Collected** (see the row above).
-2. **D2 — Legacy photos and video:** see pre-deployment report §3.4.
+2. **D2 — Legacy photos and video:** see pre-deployment report §5.4.
    - Per your instruction, nobody on the operator side modifies or deletes them.
    - If their laboratories delete them before you submit, the answers above are
      complete.
@@ -114,4 +114,4 @@
    dentists. Nothing changes in the form, but the privacy policy §3 and §7 must be
    published.
 4. **The Data Safety form does not decide whether an Organization account is required.**
-   That comes from the Health apps declaration and the app's features (report §4).
+   That comes from the Health apps declaration and the app's features (report §7).
