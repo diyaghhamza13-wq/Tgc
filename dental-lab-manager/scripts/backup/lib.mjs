@@ -99,6 +99,9 @@ with s as (
   select n.oid, n.nspname from pg_namespace n
   where has_schema_privilege(n.oid, 'USAGE')
     and n.nspname not in ('pg_catalog', 'information_schema') and n.nspname not like 'pg\\_toast%' and n.nspname not like 'pg\\_temp%'
+    -- pg_net's schema: Supabase grants PUBLIC write access to its queue when the
+    -- extension is installed (not revocable by postgres) — see SECURITY-REVIEW.md
+    and n.nspname <> 'net'
 )
 select json_build_object(
   'user', current_user,

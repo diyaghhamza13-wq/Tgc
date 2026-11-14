@@ -1,7 +1,14 @@
 # Automated backup — architecture and implementation plan (proposal)
 
-> **Status: design only.** Nothing described here has been created, deployed or
-> changed. Every production action listed in §8 needs your explicit approval.
+> **Status: Phase 1 implemented in the repository and tested locally (2026-11-14).**
+> Nothing has been created, applied, deployed or changed in production. Every
+> production action listed in §8 needs your explicit approval. The security review,
+> test evidence and the list of unverified costs and dependencies are in
+> [`SECURITY-REVIEW.md`](SECURITY-REVIEW.md).
+>
+> **Change from the first draft:** the function no longer connects to Postgres with
+> `SUPABASE_DB_URL` + `SET ROLE`. It never reads the `postgres` password. It calls a
+> `SECURITY DEFINER` snapshot function **owned by the `NOLOGIN` role** (see §3.1).
 >
 > **This supersedes the phone-based procedure:** no Termux, no routine phone
 > operations. The phone-based scripts stay in the repository but are no longer the
@@ -50,14 +57,14 @@
  daily 02:17 →  │ pg_cron ──pg_net HTTP POST (+ trigger secret from Vault)──┐    │
                 │                                                            ▼    │
                 │  Edge Function "dlm-backup"  (no JWT; checks trigger secret)   │
-                │   1. connect to Postgres, SET ROLE dlm_backup_reader (NOLOGIN, │
-                │      read-only); verify privileges, TLS, RLS bypass            │
+                │   1. RPC dlm_backup_snapshot(): SECURITY DEFINER, owned by     │
+                │      dlm_backup_reader (NOLOGIN); self-checks privileges       │
                 │   2. one read-only SELECT snapshot → JSON in memory            │
                 │   3. new/changed stored files → read via Storage API           │
                 │   4. encrypt in memory: age (X25519) to YOUR public key(s)     │
                 │   5. upload ciphertext only → off-site bucket (write-only key) │
-                │   6. re-download, compare SHA-256; write a run record          │
-                │      (counts and hashes only) into public.backup_runs          │
+                │   6. record version IDs + hashes; run record (counts/hashes)   │
+                │      in dlm_backup.runs; weekly: re-download + compare SHA-256 │
                 │  Daily managed backups (O1, paid plan) ── Supabase storage     │
                 └────────────────────────────────────────────────────────────────┘
                                                 │ ciphertext only
@@ -71,37 +78,28 @@
  never in the off-site storage, never in this chat or in Claude.
 ```
 
-### 3.1 Data read path — least privilege, no new login
-- **Role `dlm_backup_reader` is created `NOLOGIN`.** It has the same read-only grants as
-  the previous proposal, but **no password at all**, so it **cannot be used from the
-  internet**. This removes the earlier risk of an internet-reachable read-everything
-  login (R11).
-- **The function connects with the database URL** that Supabase provides to Edge
-  Functions (`SUPABASE_DB_URL`, to confirm). It immediately runs
-  `SET ROLE dlm_backup_reader` inside a `READ ONLY` transaction.
-  - `postgres` is granted membership with `SET` but without `INHERIT`
-    (`grant dlm_backup_reader to postgres with inherit false, set true`), so nothing
-    changes for normal `postgres` sessions.
-- **Before reading**, the function runs the existing checks (`lib.mjs`
-  `LOGIN_CHECK_SQL`, adapted to Deno) as `dlm_backup_reader`: no write, `CREATE`,
-  `SECURITY DEFINER`, `auth` or `vault` access, plus row-level-security bypass. If any
-  check fails, it stops and stores nothing.
-- **Tested locally (2026-11-14),** with a `NOLOGIN` copy of the role and the `SET`-only
-  membership:
-  - a login attempt is refused even with a password set ("role … is not permitted to
-    log in");
-  - after `SET ROLE`, `current_user` is `dlm_backup_reader`, row-level-security bypass
-    applies, and every privilege check passes;
-  - update, delete, insert and create table are all refused at the privilege level, even
-    with read-only mode switched off;
-  - `postgres` does **not** inherit the role's rights (`USAGE` false, `SET` true).
-  - **One adaptation:** a role's own `default_transaction_read_only` applies only at
-    *login*, not after `SET ROLE`. The function therefore opens an explicit
-    `READ ONLY` transaction, and the check tests `transaction_read_only` instead.
-- **Honest limit:** the function *environment* still holds Supabase's default secrets
-  (the database URL, the service-role key). That is already true for the three existing
-  functions today. Read-only behaviour therefore rests on the **reviewed function
-  code** (`SET ROLE` + read-only transaction + checks), not on the credential alone.
+### 3.1 Data read path — least privilege, no new login, no database password
+- **Role `dlm_backup_reader` is `NOLOGIN`** with read-only grants and `BYPASSRLS`. It
+  has no password and cannot be used to connect at all.
+- **The function never connects to Postgres directly** and never reads
+  `SUPABASE_DB_URL`. It calls `GET /rest/v1/rpc/dlm_backup_snapshot` with the
+  service-role key (which it needs anyway, to download stored files).
+- `public.dlm_backup_snapshot()` is `SECURITY DEFINER` and **owned by
+  `dlm_backup_reader`**. While it runs, the current user is the backup role (the same
+  switch `SET ROLE` performs, but limited to this fixed code). It first checks itself:
+  read-only transaction, `BYPASSRLS`, no write/`TRIGGER`/`SECURITY DEFINER`/`auth`/`vault`
+  access. Only `service_role` may execute it.
+- **Ownership hand-over in the migration:** `ALTER FUNCTION … OWNER TO` requires that
+  `postgres` can `SET ROLE` to the new owner and that the owner has `CREATE` on the
+  schema. Both are granted for that one statement and revoked immediately after, so
+  afterwards nobody can `SET ROLE dlm_backup_reader`. Full explanation:
+  `SECURITY-REVIEW.md` §1.
+- **Tested locally:** login refused; owner and `SECURITY DEFINER` correct; no `SET`
+  membership left; `anon` and a logged-in administrator cannot call any backup RPC;
+  the function runs under a Deno environment allow-list without `SUPABASE_DB_URL`.
+- **Finding:** installing `pg_net` grants every role write access to the `net` request
+  queue, which `postgres` cannot revoke; the self-check therefore excludes schema
+  `net`. Alternative scheduler without `pg_net`: `SECURITY-REVIEW.md` finding S1.
 
 ### 3.2 Encryption
 - **Algorithm:** `age` X25519 (the JavaScript implementation `age-encryption` by the
@@ -150,8 +148,10 @@ immutability, and free projects pause after inactivity.
 
 ### 3.5 Monitoring and verification — automatic
 - **Every run:**
-  - re-download the uploaded ciphertext and compare SHA-256;
-  - write a row into `public.backup_runs`: time, status, duration, per-table row counts
+  - every upload carries a signed SHA-256 that the storage provider checks; the
+    function records the ciphertext hash and the provider's version ID (the write key
+    cannot read, so re-downloading happens in the weekly check below);
+  - write a row into `dlm_backup.runs`: time, status, duration, per-table row counts
     and SHA-256, ciphertext size and hash, error text without personal data;
   - the table has row-level security on and **no access for app users**.
 - **Daily health check** (`pg_cron`, SQL only): if no successful run in 26 hours, mark
@@ -252,53 +252,46 @@ Each step is a separate approval point. Steps done by you are marked **[you]**.
 | P1 | **[you]** Decide on the paid plan for O1 | Billing | Optional. With O3 alone, skip it. |
 | P2 | **[you]** Create the off-site bucket (B2 or R2, EU), with Object Lock 35 days, lifecycle 35 days, and a write-only key for that bucket | External service | Values go into P7, never into the chat |
 | P3 | **[you]** Generate the key pair with the offline HTML tool; save the private key in your password manager and on paper | One-time, browser | Optional second recipient key for redundancy |
-| P4 | Migration: create role `dlm_backup_reader` **NOLOGIN** + read-only grants + `grant … to postgres with inherit false, set true` | Database DDL | No password anywhere |
-| P5 | Migration: table `public.backup_runs` (RLS on, no app access) | Database DDL | Run records hold no personal data |
-| P6 | Migration: `create extension pg_net`; Vault trigger secret generated in SQL | Database DDL | `pg_net` is already available |
+| P4–P6 | Apply `supabase/migrations-pending/20261114190000_automated_backup.sql`: role `dlm_backup_reader` **NOLOGIN** + read-only grants; snapshot function owned by it (temporary `SET` membership revoked in the same migration); schema `dlm_backup` (runs, files; RLS on, no API access); service-role-only RPCs; `pg_net`; Vault trigger secret generated in SQL | Database DDL | No password anywhere; run records hold no personal data |
 | P7 | **[you]** In the Supabase dashboard → Edge Functions → Secrets: public key(s), bucket endpoint and name, write-only key id and secret | Secrets | Entered by you; Claude never sees them |
 | P8 | Deploy Edge Function `dlm-backup` (`verify_jwt` off; trigger-secret check) | Deploy | Code reviewed and tested locally first |
 | P9 | First manual run, then you verify one backup in the HTML tool (drill) | Run | Proves end-to-end decrypt |
-| P10 | `pg_cron` jobs: daily backup (e.g. 02:17 UTC), daily health check, weekly integrity check | Database DDL | Disable with `cron.unschedule` |
+| P10 | Vault secret `dlm_backup_function_url`, then apply `…190100_automated_backup_schedule.sql`: daily backup 02:17 UTC, daily health check 03:47, weekly integrity check Sunday 04:27 | Database DDL | Disable with `cron.unschedule` |
 | P11 | Optional: enable SSL enforcement | Setting | Independent hardening; check restart behaviour first |
 | P12 | Privacy policy: backup block filled in (where, encryption, retention 35 days) | Publish | Only after P9 succeeds |
 
-**Removal plan:** unschedule the cron jobs, delete the function, drop the role and the
-table (SQL provided with the migration). Off-site objects expire automatically after
+**Removal plan:** `supabase/migrations-pending/REMOVE_automated_backup.sql` (jobs,
+functions, schema, Vault secrets, role), then delete the function. Off-site objects expire automatically after
 35 days.
 
-## 9. Implementation plan (repository and local only, before any production step)
-1. **Edge Function `supabase/functions/dlm-backup/`** (Deno):
-   - port `lib.mjs` checks and the `export.mjs` snapshot logic;
-   - `SET ROLE`;
-   - `age` encryption;
-   - S3 signing for B2/R2;
-   - incremental file copy;
-   - re-download hash check;
-   - run record.
-2. **Migrations (not applied):** P4, P5, P6, and the P10 cron SQL as a separate file.
-3. **Offline HTML tool:** key generation, decrypt, verify, restore-SQL generation.
-4. **Local tests:**
-   - against the local Supabase stack and a local S3-compatible server (MinIO in Docker):
-     a full run, the encrypted objects, the immutability simulation, the run record;
-   - security checks: a wrong trigger secret is refused; a non-read-only role is
-     refused; no plaintext is uploaded; the write-only key cannot read; the file map is
-     encrypted;
-   - a restore drill from the uploaded objects (29/29 tables identical);
-   - the HTML tool tested headless in Chromium (key generation, decrypt, verify).
-5. **Security review** of the diff, then your approval for P1–P12 in order.
+## 9. Implementation (Phase 1, repository only — done)
+| Part | Files |
+|---|---|
+| Edge Function | `supabase/functions/dlm-backup/` (`index.ts`, `deno.json`; `age-encryption@0.3.1`, `aws4fetch@1.0.20`) |
+| Migrations (not applied) | `supabase/migrations-pending/20261114190000_automated_backup.sql`, `…190100_automated_backup_schedule.sql`, `REMOVE_automated_backup.sql` |
+| Offline page | `docs/backup/tools/backup-tool.html`, built from `tools/backup-tool/` |
+| Restore tooling | `scripts/backup/offsite-restore.mjs`, `restore-core.mjs`, `restore.mjs` |
+| Storage simulator | `scripts/backup/sim/s3-simulator.mjs` (SigV4, key permissions, versioning, compliance lock, lifecycle) |
+| Tests | `scripts/tests/automated-backup-local-test.sh` (68 end-to-end + 13 browser checks) |
+
+Instead of MinIO, a purpose-built simulator is used: Docker images could not be
+assumed, and the simulator lets the test move the clock to check lock and lifecycle.
+Its behaviour is **simulated, not the providers' real behaviour** (finding S10).
 
 ## 10. Open points to confirm before approval
 - Supabase:
   - current plan prices and the daily-backup retention per plan;
   - whether managed backups include Storage files and Auth;
   - Edge Function limits (duration, memory) on your plan;
-  - that `SUPABASE_DB_URL` is provided to functions;
+  - that `SUPABASE_DB_URL` is injected into functions (it is unused, but present);
+  - that the function environment and `EdgeRuntime.waitUntil` behave as tested;
   - the recommended `pg_cron` + `pg_net` + Vault scheduling pattern;
   - whether enabling SSL enforcement restarts the database.
 - B2/R2: free-tier limits, Object Lock/bucket-lock availability in the EU region, and
   write-only key scopes.
-- `age-encryption` JavaScript library: version, licence (BSD-3-Clause expected) and
-  Deno compatibility.
+- B2/R2: `If-None-Match`, version IDs, ETag form, and how compliance lock and lifecycle
+  interact (simulated locally only).
+- All costs in this document and in `SECURITY-REVIEW.md` §8 are **unverified**.
 
 The quickest way to settle these is to let this session read supabase.com and the
 storage providers' documentation. That is your decision; no network change has been
