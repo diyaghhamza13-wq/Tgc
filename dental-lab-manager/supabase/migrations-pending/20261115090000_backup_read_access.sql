@@ -182,7 +182,7 @@ alter function public.dlm_backup_snapshot() owner to dlm_backup_reader;
 -- the new owner lets postgres (owner of the token-checked wrapper below) call it
 set role dlm_backup_reader;
 grant execute on function public.dlm_backup_snapshot() to postgres;
-reset role;
+set role postgres;   -- back to postgres explicitly (whatever role the session started as)
 revoke dlm_backup_reader from postgres;
 revoke create on schema public from dlm_backup_reader;
 
