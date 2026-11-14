@@ -152,10 +152,10 @@ Results:
 ### 5.4 B2 — encrypted logical export (plan; not executed)
 
 **Scope (what goes in the export)**
-- **Every row of every table in schema `public`** (28 tables, ≈ 16 MB database):
+- **Every row of every table in schema `public`** (29 tables, ≈ 16 MB database):
   laboratories, employees, `employee_credentials` (bcrypt PIN hashes only), doctors,
   **patients (15 names)**, cases, teeth, implants, restorations, workflow, history,
-  attachments metadata, notifications, QC, deliveries, audit logs, catalogs.
+  attachments metadata, notifications, QC, deliveries, audit logs, pending storage cleanups, catalogs.
 - `supabase_migrations.schema_migrations` (the 7 version rows).
 - **Storage metadata** for buckets `case-files` and `lab-assets`: object names, sizes,
   timestamps. Not the file contents.
