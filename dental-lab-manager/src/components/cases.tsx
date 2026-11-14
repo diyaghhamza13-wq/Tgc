@@ -1,7 +1,8 @@
 import { useRouter } from 'expo-router';
-import { Calendar, Check, ChevronLeft, ChevronRight, Clock, Star, User } from 'lucide-react-native';
+import { Calendar, Check, ChevronLeft, ChevronRight, Clock, Star } from 'lucide-react-native';
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
+import { displayFileName } from '../lib/files';
 import { fmtDate, fmtDuration, isDelayed } from '../lib/format';
 import { useI18n } from '../lib/i18n';
 import { colors, priorityColor, radius, statusColor } from '../lib/theme';
@@ -52,13 +53,18 @@ export function CaseCard({ c }: { c: CaseListItem }) {
         </View>
         <View style={{ flex: 1, gap: 3 }}>
           <View style={styles.cardRow}>
-            <Text style={styles.caseNo}>{c.case_number}</Text>
+            <Text style={styles.caseNo} numberOfLines={1}>
+              {c.case_number}
+            </Text>
             {c.priority !== 'normal' ? <Star size={15} color={priorityColor[c.priority]} fill={priorityColor[c.priority]} /> : null}
-            <View style={{ flex: 1 }} />
-            <Badge label={stageLabel} color={statusColor[c.status] ?? colors.gold} />
+            <View style={{ flex: 1, minWidth: 4 }} />
+            <View style={{ flexShrink: 1 }}>
+              <Badge label={stageLabel} color={statusColor[c.status] ?? colors.gold} />
+            </View>
           </View>
-          <Text style={styles.patient} numberOfLines={1}>
-            {c.patient?.full_name}
+          <Text style={styles.title} numberOfLines={1}>
+            {c.doctor?.full_name}
+            {c.clinic_order_ref ? <Text style={styles.ref}>{`  · ${c.clinic_order_ref}`}</Text> : null}
           </Text>
           {types ? (
             <Text style={styles.small} numberOfLines={1}>
@@ -69,12 +75,6 @@ export function CaseCard({ c }: { c: CaseListItem }) {
             <View style={styles.meta}>
               <Calendar size={13} color={isDelayed(c) ? colors.error : colors.muted} />
               <Text style={[styles.small, isDelayed(c) && { color: colors.error }]}>{fmtDate(c.due_date, locale)}</Text>
-            </View>
-            <View style={styles.meta}>
-              <User size={13} color={colors.muted} />
-              <Text style={styles.small} numberOfLines={1}>
-                {c.doctor?.full_name}
-              </Text>
             </View>
             {c.current && c.status !== 'delivered' ? (
               <Text style={[styles.small, { color: colors.text }]} numberOfLines={1}>
@@ -140,7 +140,7 @@ export function HistoryList({ events, employees, stages }: { events: HistoryEven
             : e.event_type === 'stage_started' || e.event_type === 'stage_status'
               ? `${tx('ev', e.event_type)} · ${(e.data.stage_name as string) ?? ''}${e.status ? ` (${tx('stage', e.status)})` : ''}`
               : e.event_type.startsWith('file')
-                ? `${tx('ev', e.event_type)} · ${(e.data.file_name as string) ?? ''}`
+                ? `${tx('ev', e.event_type)} · ${displayFileName({ file_name: (e.data.file_name as string) ?? '', category: (e.data.category as string) ?? 'other' })}`
                 : e.event_type === 'assigned'
                   ? `${tx('ev', 'assigned')} · ${(e.data.stage_name as string) ?? ''} → ${nameOf(e.data.employee_name)}`
                   : tx('ev', e.event_type);
@@ -180,8 +180,9 @@ export function StageDuration({ s }: { s: Stage }) {
 const styles = StyleSheet.create({
   cardRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   thumb: { width: 62, height: 62, borderRadius: radius.md, backgroundColor: colors.bg, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
-  caseNo: { color: colors.white, fontSize: 16, fontWeight: '800', writingDirection: 'ltr' },
-  patient: { color: colors.white, fontSize: 17, fontWeight: '700' },
+  caseNo: { color: colors.white, fontSize: 16, fontWeight: '800', writingDirection: 'ltr', flexShrink: 0 },
+  title: { color: colors.white, fontSize: 17, fontWeight: '700' },
+  ref: { color: colors.gold, fontSize: 14, fontWeight: '600', writingDirection: 'ltr' },
   small: { color: colors.muted, fontSize: 12 },
   meta: { flexDirection: 'row', alignItems: 'center', gap: 4, maxWidth: 160 },
   dotsRow: { alignItems: 'center', marginTop: 12, paddingHorizontal: 6 },

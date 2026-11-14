@@ -1,9 +1,9 @@
 import { useRouter } from 'expo-router';
-import { Box, Check, FileText, Layers, Paperclip, Plus, Stethoscope, Trash2, User, UserCog, X } from 'lucide-react-native';
+import { Box, Check, FileText, Hash, Layers, Paperclip, Plus, Stethoscope, Trash2, User, UserCog, X } from 'lucide-react-native';
 import React, { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useAuth } from '../lib/auth';
-import { type PickedFile, pickFiles, uploadCaseFile } from '../lib/files';
+import { type PickedFile, pickFiles, productionFileName, uploadCaseFile } from '../lib/files';
 import { fmtSize, todayISO } from '../lib/format';
 import { useI18n } from '../lib/i18n';
 import { type CaseDetail, type Catalogs, fetchCatalogs, fetchDepartments, fetchDoctors, fetchEmployees } from '../lib/queries';
@@ -93,7 +93,7 @@ export function CaseWizard({ existing }: { existing?: CaseDetail }) {
   });
 
   const [step, setStep] = useState(0);
-  const [patientName, setPatientName] = useState(existing?.case.patient?.full_name ?? '');
+  const [orderRef, setOrderRef] = useState(existing?.case.clinic_order_ref ?? '');
   const [doctorId, setDoctorId] = useState<string | null>(existing?.case.doctor_id ?? null);
   const [techId, setTechId] = useState<string | null>(existing?.case.assigned_technician_id ?? null);
   const [receivedAt, setReceivedAt] = useState(existing?.case.received_at.slice(0, 10) ?? todayISO());
@@ -167,7 +167,7 @@ export function CaseWizard({ existing }: { existing?: CaseDetail }) {
   };
 
   const validate = (): string | null => {
-    if (!editing && patientName.trim().length < 2) return 'patient_required';
+    if (orderRef.trim().length > 40) return 'invalid_clinic_order_ref';
     if (!doctorId) return 'doctor_required';
     if (!dueDate) return 'due_date_required';
     if (selected.length === 0) return 'teeth_required';
@@ -212,7 +212,7 @@ export function CaseWizard({ existing }: { existing?: CaseDetail }) {
         unwrap(
           await supabase
             .from('cases')
-            .update({ doctor_id: doctorId, assigned_technician_id: techId, due_date: dueDate, priority, shade: shade || null, notes: notes || null })
+            .update({ clinic_order_ref: orderRef.trim() || null, doctor_id: doctorId, assigned_technician_id: techId, due_date: dueDate, priority, shade: shade || null, notes: notes || null })
             .eq('id', id)
             .select('id'),
         );
@@ -223,7 +223,7 @@ export function CaseWizard({ existing }: { existing?: CaseDetail }) {
       const caseId = unwrap(
         await supabase.rpc('create_case', {
           p: {
-            patient: { full_name: patientName.trim() }, doctor_id: doctorId, assigned_technician_id: techId,
+            clinic_order_ref: orderRef.trim() || null, doctor_id: doctorId, assigned_technician_id: techId,
             received_at: receivedAt === todayISO() ? null : `${receivedAt}T09:00:00`, due_date: dueDate, priority, shade, notes, ...prescription,
           },
         }),
@@ -232,7 +232,7 @@ export function CaseWizard({ existing }: { existing?: CaseDetail }) {
       for (let i = 0; i < files.length; i++) {
         setBusy(`${t('wiz.uploading')} ${i + 1}/${files.length}`);
         try {
-          await uploadCaseFile({ labId: me!.lab_id, caseId, employeeId: me!.id, file: files[i] });
+          await uploadCaseFile({ labId: me!.lab_id, caseId, employeeId: me!.id, file: files[i], category: 'scan' });
         } catch {
           failed++;
         }
@@ -241,7 +241,7 @@ export function CaseWizard({ existing }: { existing?: CaseDetail }) {
       if (failed) fb.toast(t('wiz.uploadFailed', { n: failed }), 'error');
       else fb.toast(t('wiz.created', { n: c?.case_number ?? '' }));
       // reset for the next case and open the new one
-      setPatientName(''); setDoctorId(null); setTechId(null); setDueDate(null); setPriority('normal'); setShade(''); setNotes('');
+      setOrderRef(''); setDoctorId(null); setTechId(null); setDueDate(null); setPriority('normal'); setShade(''); setNotes('');
       setChart({}); setRestos([]); setImplants({}); setFiles([]); setStep(0);
       router.push(`/case/${caseId}`);
     } catch (e) {
@@ -260,11 +260,15 @@ export function CaseWizard({ existing }: { existing?: CaseDetail }) {
       {step === 0 ? (
         <Card>
           <SectionTitle icon={<User color={colors.gold} size={22} />}>{t('wiz.s1')}</SectionTitle>
-          {editing ? (
-            <Field label={t('case.patient')} value={patientName} editable={false} icon={<User color={colors.muted} size={20} />} />
-          ) : (
-            <Field label={t('wiz.patientName')} required value={patientName} onChangeText={setPatientName} icon={<User color={colors.gold} size={20} />} />
-          )}
+          <Field
+            label={`${t('case.orderRef')} (${t('c.optional')})`}
+            value={orderRef}
+            onChangeText={setOrderRef}
+            maxLength={40}
+            autoCapitalize="characters"
+            icon={<Hash color={colors.gold} size={20} />}
+          />
+          <Text style={[styles.hint, { marginTop: -6, marginBottom: 12 }]}>{t('wiz.orderRefHint')}</Text>
           <Select
             label={t('case.doctor')}
             required
@@ -297,6 +301,7 @@ export function CaseWizard({ existing }: { existing?: CaseDetail }) {
             ))}
           </View>
           <Field label={t('wiz.generalNotes')} value={notes} onChangeText={setNotes} multiline icon={<FileText color={colors.gold} size={20} />} style={{ marginTop: 12 }} />
+          <Text style={styles.hint}>{t('wiz.noPatientData')}</Text>
           {!editing ? <Text style={styles.hint}>{t('wiz.reference')}: DL-XXXXXX</Text> : null}
         </Card>
       ) : null}
@@ -462,11 +467,12 @@ export function CaseWizard({ existing }: { existing?: CaseDetail }) {
           {!editing ? (
             <Card>
               <SectionTitle icon={<Paperclip color={colors.gold} size={22} />}>{t('wiz.attachments')}</SectionTitle>
+              <Text style={[styles.hint, { marginBottom: 8 }]}>{t('files.allowed')}</Text>
               {files.map((f, i) => (
                 <Row key={`${f.name}${i}`} style={styles.fileRow}>
                   <FileText color={colors.gold} size={18} />
                   <Text style={{ color: colors.white, flex: 1 }} numberOfLines={1}>
-                    {f.name}
+                    {productionFileName(f.name, 'scan')}
                   </Text>
                   <Text style={styles.hint}>{fmtSize(f.size)}</Text>
                   <Pressable onPress={() => setFiles((fs) => fs.filter((_, j) => j !== i))} hitSlop={8} accessibilityLabel={t('c.delete')}>
@@ -480,7 +486,8 @@ export function CaseWizard({ existing }: { existing?: CaseDetail }) {
                 title={t('wiz.addFiles')}
                 onPress={async () => {
                   const picked = await pickFiles();
-                  setFiles((fs) => [...fs, ...picked]);
+                  if (picked.rejected.length) fb.toast(t('files.rejected', { n: picked.rejected.length }), 'error');
+                  setFiles((fs) => [...fs, ...picked.files]);
                 }}
               />
             </Card>

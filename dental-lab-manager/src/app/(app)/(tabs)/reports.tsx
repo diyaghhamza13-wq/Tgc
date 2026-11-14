@@ -23,7 +23,7 @@ type Report = {
   materials: { name: string; count: number; units: number }[];
   restoration_types: { name: string; count: number }[];
   doctors: { name: string; count: number }[];
-  cases: { case_number: string; patient: string; doctor: string; received_at: string; due_date: string; status: string; priority: string; delivered_at: string | null }[];
+  cases: { case_number: string; clinic_order_ref: string | null; doctor: string; received_at: string; due_date: string; status: string; priority: string; delivered_at: string | null }[];
 };
 
 /** Analytics with filters and PDF / Excel export. Scope is enforced by the server. */
@@ -65,8 +65,8 @@ export default function Reports() {
           { name: t('rep.materials'), headers: [t('wiz.material'), t('rep.count'), t('rep.units')], rows: r.materials.map((m) => [m.name, m.count, m.units]) },
           { name: t('rep.types'), headers: [t('wiz.restorationType'), t('rep.count')], rows: r.restoration_types.map((x) => [x.name, x.count]) },
           { name: t('rep.doctors'), headers: [t('case.doctor'), t('rep.count')], rows: r.doctors.map((x) => [x.name, x.count]) },
-          { name: t('rep.caseList'), headers: [t('case.number'), t('case.patient'), t('case.doctor'), t('case.receivedAt'), t('case.dueDate'), t('c.status'), t('case.priority')],
-            rows: r.cases.map((c) => [c.case_number, c.patient, c.doctor, fmtDate(c.received_at, locale), fmtDate(c.due_date, locale), tx('status', c.status), tx('prio', c.priority)]) },
+          { name: t('rep.caseList'), headers: [t('case.number'), t('case.orderRef'), t('case.doctor'), t('case.receivedAt'), t('case.dueDate'), t('c.status'), t('case.priority')],
+            rows: r.cases.map((c) => [c.case_number, c.clinic_order_ref ?? '', c.doctor, fmtDate(c.received_at, locale), fmtDate(c.due_date, locale), tx('status', c.status), tx('prio', c.priority)]) },
         ];
   const fileBase = `report-${me?.lab.code}-${applied.from}_${applied.to}`;
   const doExport = async (kind: 'pdf' | 'xls') => {

@@ -37,7 +37,6 @@ export interface Employee {
 }
 
 export interface Doctor { id: string; lab_id: string; full_name: string; clinic_name: string | null; phone: string | null; email: string | null; address: string | null; city: string | null; notes: string | null; is_active: boolean }
-export interface Patient { id: string; full_name: string; reference: string | null }
 export interface RestorationType { id: string; code: string; name: string; icon: string; is_implant_related: boolean; is_active: boolean; sort_order: number }
 export interface Material { id: string; code: string; name: string; category: string | null; default_brand: string | null; is_active: boolean; sort_order: number }
 export interface ImplantBrand { id: string; name: string; is_active: boolean; sort_order: number }
@@ -65,7 +64,9 @@ export interface CaseRow {
   id: string;
   lab_id: string;
   case_number: string;
-  patient_id: string;
+  /** legacy link to a patient record (cases created before production-only mode); never shown */
+  patient_id: string | null;
+  clinic_order_ref: string | null;
   doctor_id: string;
   assigned_technician_id: string | null;
   current_stage_id: string | null;
@@ -82,7 +83,6 @@ export interface CaseRow {
 
 /** Case with the joins used by lists */
 export interface CaseListItem extends CaseRow {
-  patient: { full_name: string } | null;
   doctor: { full_name: string } | null;
   current: (Pick<Stage, 'id' | 'name' | 'kind' | 'status' | 'department_id' | 'assigned_employee_id' | 'started_at'> & {
     assignee: { full_name: string } | null;
@@ -110,8 +110,8 @@ export const UPPER_JAW = [18, 17, 16, 15, 14, 13, 12, 11, 21, 22, 23, 24, 25, 26
 export const LOWER_JAW = [48, 47, 46, 45, 44, 43, 42, 41, 31, 32, 33, 34, 35, 36, 37, 38];
 
 export const CASE_LIST_SELECT =
-  'id, lab_id, case_number, patient_id, doctor_id, assigned_technician_id, current_stage_id, received_at, due_date, priority, status, shade, notes, created_by, created_at, delivered_at,' +
-  ' patient:patients(full_name), doctor:doctors(full_name),' +
+  'id, lab_id, case_number, clinic_order_ref, doctor_id, assigned_technician_id, current_stage_id, received_at, due_date, priority, status, shade, notes, created_by, created_at, delivered_at,' +
+  ' doctor:doctors(full_name),' +
   ' current:case_workflow_stages!cases_current_stage_fk(id, name, kind, status, department_id, assigned_employee_id, started_at, assignee:employees!case_workflow_stages_lab_id_assigned_employee_id_fkey(full_name)),' +
   ' stages:case_workflow_stages!case_workflow_stages_lab_id_case_id_fkey(id, position, status, kind),' +
   ' restorations:case_restorations(restoration_type:restoration_types(name))';

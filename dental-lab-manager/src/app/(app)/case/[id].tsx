@@ -1,7 +1,7 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import {
   ArrowRightLeft, Ban, Calendar, Clock, Download, FileText, History, MessageSquare, Pause, Pencil, Play,
-  RotateCcw, Send, ShieldCheck, ShieldX, Stethoscope, Trash2, Truck, Upload, User, UserCog,
+  Hash, RotateCcw, Send, ShieldCheck, ShieldX, Stethoscope, Trash2, Truck, Upload, User, UserCog,
 } from 'lucide-react-native';
 import React, { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
@@ -12,7 +12,7 @@ import { Select } from '../../../components/pickers';
 import { type ChartValue, ToothChart } from '../../../components/ToothChart';
 import { Badge, Button, Card, Chip, Divider, EmptyState, ErrorBanner, Field, KV, Loading, Row, Screen, SectionTitle, Toggle } from '../../../components/ui';
 import { useAuth } from '../../../lib/auth';
-import { deleteCaseFile, guessCategory, openCaseFile, pickFiles, uploadCaseFile } from '../../../lib/files';
+import { deleteCaseFile, displayFileName, openCaseFile, pickFiles, type UploadCategory, uploadCaseFile } from '../../../lib/files';
 import { fmtDate, fmtDuration, fmtSize, isDelayed, secondsSince } from '../../../lib/format';
 import { useI18n } from '../../../lib/i18n';
 import { fetchCaseDetail, fetchDepartments, fetchEmployees } from '../../../lib/queries';
@@ -99,13 +99,17 @@ export default function CaseDetails() {
   };
 
   const uploadFiles = async () => {
-    const files = await pickFiles();
+    const picked = await pickFiles();
+    if (picked.rejected.length) fb.toast(t('files.rejected', { n: picked.rejected.length }), 'error');
+    const files = picked.files;
     if (!files.length || !me) return;
+    // production files only; the category follows the stage the case is in
+    const category: UploadCategory = current?.kind === 'qc' ? 'qc' : current?.kind === 'production' ? 'production' : 'scan';
     let failed = 0;
     for (let i = 0; i < files.length; i++) {
       setUploading(`${i + 1}/${files.length}`);
       try {
-        await uploadCaseFile({ labId: me.lab_id, caseId: c.id, employeeId: me.id, file: files[i], category: guessCategory(files[i].name), stageId: current?.id });
+        await uploadCaseFile({ labId: me.lab_id, caseId: c.id, employeeId: me.id, file: files[i], category, stageId: current?.id });
       } catch (e) {
         failed++;
         fb.toast(`${files[i].name}: ${tx('err', errorCode(e))}`, 'error');
@@ -130,15 +134,15 @@ export default function CaseDetails() {
       refreshing={loading}
       onRefresh={reload}
     >
-      {/* Header card: patient / doctor / dates */}
+      {/* Header card: doctor / clinic order reference / dates */}
       <Card>
         <Row style={{ alignItems: 'flex-start' }} gap={14}>
           <View style={styles.thumb}>
             <ToothIcon size={64} color={statusColor[c.status] ?? colors.gold} strokeWidth={1.2} />
           </View>
           <View style={{ flex: 1 }}>
-            <KV label={t('case.patient')} value={c.patient?.full_name} icon={<User color={colors.gold} size={22} />} />
             <KV label={t('case.doctor')} value={c.doctor?.full_name} icon={<Stethoscope color={colors.gold} size={22} />} />
+            <KV label={t('case.orderRef')} value={c.clinic_order_ref ?? '—'} icon={<Hash color={colors.gold} size={22} />} />
             <KV label={t('case.receivedAt')} value={fmtDate(c.received_at, locale)} icon={<Calendar color={colors.gold} size={22} />} />
           </View>
         </Row>
@@ -329,13 +333,14 @@ export default function CaseDetails() {
         >
           {t('det.attachments')} ({data.attachments.length})
         </SectionTitle>
+        {!closed ? <Text style={styles.small}>{t('files.allowed')}</Text> : null}
         {data.attachments.length === 0 ? <EmptyState title={t('c.empty')} /> : null}
         {data.attachments.map((a) => (
           <Row key={a.id} style={styles.fileRow}>
             <FileText color={colors.gold} size={22} />
             <View style={{ flex: 1 }}>
               <Text style={styles.body} numberOfLines={1}>
-                {a.file_name}
+                {displayFileName(a)}
               </Text>
               <Text style={styles.small}>
                 {tx('cat', a.category)} · {fmtSize(a.size_bytes)} · {a.uploaded_by ? empName[a.uploaded_by] : '—'} · {fmtDate(a.created_at, locale, true)}
@@ -344,7 +349,7 @@ export default function CaseDetails() {
             <Pressable
               hitSlop={8}
               accessibilityLabel={t('c.download')}
-              onPress={() => openCaseFile(a.storage_path, a.file_name).catch((e) => fb.toast(tx('err', errorCode(e)), 'error'))}
+              onPress={() => openCaseFile(a.storage_path, displayFileName(a)).catch((e) => fb.toast(tx('err', errorCode(e)), 'error'))}
             >
               <Download color={colors.gold} size={20} />
             </Pressable>
@@ -353,7 +358,7 @@ export default function CaseDetails() {
                 hitSlop={8}
                 accessibilityLabel={t('c.delete')}
                 onPress={async () => {
-                  if (await fb.confirm({ title: t('det.deleteFile'), message: a.file_name, danger: true, confirmLabel: t('c.delete') })) {
+                  if (await fb.confirm({ title: t('det.deleteFile'), message: displayFileName(a), danger: true, confirmLabel: t('c.delete') })) {
                     run(() => deleteCaseFile(a.storage_path));
                   }
                 }}

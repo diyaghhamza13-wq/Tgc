@@ -44,7 +44,7 @@ export function filterCases(list: CaseListItem[], filter: CaseFilter, q: string)
     if (filter === 'delayed' ? !isDelayed(c) : filter !== 'all' && c.status !== filter) return false;
     if (filter === 'all' && c.status === 'cancelled' && !query) return false;
     if (!query) return true;
-    return [c.case_number, c.patient?.full_name, c.doctor?.full_name, c.current?.assignee?.full_name, c.id]
+    return [c.case_number, c.clinic_order_ref, c.doctor?.full_name, c.current?.assignee?.full_name, c.id]
       .filter(Boolean)
       .some((s) => String(s).toLowerCase().includes(query));
   });
@@ -90,7 +90,7 @@ export async function fetchCatalogs(): Promise<Catalogs> {
 }
 
 export type CaseDetail = {
-  case: CaseRow & { patient: { full_name: string; reference: string | null } | null; doctor: { full_name: string; clinic_name: string | null; phone: string | null } | null };
+  case: CaseRow & { doctor: { full_name: string; clinic_name: string | null; phone: string | null } | null };
   stages: Stage[];
   teeth: CaseTooth[];
   restorations: (CaseRestoration & { restoration_type: { name: string } | null; material: { name: string } | null })[];
@@ -103,7 +103,7 @@ export type CaseDetail = {
 
 export async function fetchCaseDetail(id: string): Promise<CaseDetail> {
   const [c, stages, teeth, restorations, implants, attachments, history, qc, delivery] = await Promise.all([
-    supabase.from('cases').select('*, patient:patients(full_name, reference), doctor:doctors(full_name, clinic_name, phone)').eq('id', id).single(),
+    supabase.from('cases').select('*, doctor:doctors(full_name, clinic_name, phone)').eq('id', id).single(),
     supabase.from('case_workflow_stages').select('*').eq('case_id', id).order('position'),
     supabase.from('case_teeth').select('*').eq('case_id', id).order('tooth_number'),
     supabase.from('case_restorations').select('*, restoration_type:restoration_types(name), material:materials(name)').eq('case_id', id).order('position'),

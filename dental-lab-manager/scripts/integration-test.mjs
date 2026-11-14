@@ -164,7 +164,7 @@ async function main() {
   const m = (c) => mats.find((x) => x.code === c).id;
   const due = new Date(Date.now() + 5 * 86400000).toISOString().slice(0, 10);
   const prescription = {
-    patient: { full_name: 'Youssef El Mokri' },
+    clinic_order_ref: 'ORD-4471',
     doctor_id: doctor.id,
     assigned_technician_id: ids.CER01,
     due_date: due,
@@ -207,6 +207,51 @@ async function main() {
   const S = (name) => stages.find((s) => s.name === name);
   check('chosen ceramist pre-assigned to Ceramics', S('Ceramics').assigned_employee_id === ids.CER01);
 
+  section('4b. Production-only cases (no patient data)');
+  check('case keeps the clinic order reference', kase.clinic_order_ref === 'ORD-4471', kase.clinic_order_ref);
+  check('new case has no patient link', kase.patient_id === null, kase.patient_id);
+  const { error: withPatient } = await rec.rpc('create_case', { p: { ...prescription, patient: { full_name: 'Real Name' } } });
+  check('create_case rejects patient data', !!withPatient && withPatient.message.includes('patient_data_not_accepted'), withPatient?.message);
+  const { error: withPatientId } = await rec.rpc('create_case', { p: { ...prescription, patient_id: crypto.randomUUID() } });
+  check('create_case rejects a patient id', !!withPatientId && withPatientId.message.includes('patient_data_not_accepted'), withPatientId?.message);
+  const { error: longRef } = await rec.rpc('create_case', { p: { ...prescription, clinic_order_ref: 'X'.repeat(41) } });
+  check('clinic order reference limited to 40 characters', !!longRef && longRef.message.includes('invalid_clinic_order_ref'), longRef?.message);
+  const { error: patSel } = await admin.from('patients').select('id').limit(1);
+  check('patients table not readable by the app', !!patSel, patSel);
+  const { error: patIns } = await admin.from('patients').insert({ lab_id: info.id, full_name: 'Someone' });
+  check('patients table not writable by the app', !!patIns);
+  const { error: setPat } = await admin.from('cases').update({ patient_id: null }).eq('id', caseId);
+  check('cases.patient_id not writable by the app', !!setPat);
+  const { data: refUpd, error: refErr } = await admin.from('cases').update({ clinic_order_ref: 'ORD-4472' }).eq('id', caseId).select('clinic_order_ref');
+  check('clinic order reference editable', !refErr && refUpd?.[0]?.clinic_order_ref === 'ORD-4472', refErr?.message);
+  await admin.from('cases').update({ clinic_order_ref: 'ORD-4471' }).eq('id', caseId);
+  const meta = (category, ext, mime) => ({
+    lab_id: info.id, case_id: caseId, category, file_name: `f.${ext}`, mime_type: mime, size_bytes: 1,
+    storage_path: `${info.id}/${caseId}/${crypto.randomUUID()}.${ext}`, uploaded_by: ids.REC01,
+  });
+  for (const [label, row] of [
+    ['photo category', meta('photo', 'stl', 'model/stl')],
+    ['CBCT category', meta('cbct', 'dcm', 'application/octet-stream')],
+    ['prescription category', meta('prescription', 'stl', 'model/stl')],
+    ['DICOM mime type', meta('scan', 'dcm', 'application/dicom')],
+    ['JPEG image', meta('scan', 'jpg', 'image/jpeg')],
+    ['PDF', meta('other', 'pdf', 'application/pdf')],
+    ['image mime with .stl name', meta('scan', 'stl', 'image/png')],
+  ]) {
+    const { error } = await rec.from('attachments').insert(row);
+    check(`new upload rejected: ${label}`, !!error && error.message.includes('file_type_not_allowed'), error?.message);
+  }
+  const { error: namedObj } = await rec.storage.from('case-files').upload(`${info.id}/${caseId}/${crypto.randomUUID()}-Dupont.stl`, new Blob(['solid x']), { contentType: 'model/stl' });
+  check('storage rejects object names with original file names', !!namedObj);
+  const { error: jpgObj } = await rec.storage.from('case-files').upload(`${info.id}/${caseId}/${crypto.randomUUID()}.jpg`, new Blob(['x']), { contentType: 'image/jpeg' });
+  check('storage rejects photo uploads', !!jpgObj);
+  const dcmPath = `${info.id}/${caseId}/${crypto.randomUUID()}.dcm`;
+  const { error: dcmObj } = await rec.storage.from('case-files').upload(dcmPath, new Blob(['3shape mesh']), { contentType: 'application/octet-stream' });
+  const { error: dcmMeta } = await rec.from('attachments').insert({ ...meta('scan', 'dcm', 'application/octet-stream'), storage_path: dcmPath, file_name: 'Lower Jaw Scan.dcm' });
+  check('3Shape .dcm mesh accepted', !dcmObj && !dcmMeta, dcmObj?.message ?? dcmMeta?.message);
+  const { data: dcmRow } = await rec.from('attachments').select('file_name').eq('storage_path', dcmPath).single();
+  check('3Shape file name reduced to technical words', dcmRow?.file_name === 'scan_lower_scan.dcm', dcmRow);
+
   section('5. Production workflow & permissions');
   const { data: cadStats } = await cad.rpc('dashboard_stats');
   check('CAD sees the case in My Tasks', cadStats.my_tasks === 1, cadStats);
@@ -226,19 +271,23 @@ async function main() {
   check('case is in_progress', afterStart.status === 'in_progress');
 
   // attachment upload to storage + metadata row
-  const path = `${info.id}/${caseId}/${crypto.randomUUID()}-design.stl`;
+  const path = `${info.id}/${caseId}/${crypto.randomUUID()}.stl`;
   const { error: upErr } = await cad.storage.from('case-files').upload(path, new Blob(['solid test\nendsolid test\n']), { contentType: 'model/stl' });
   check('CAD uploads STL to storage', !upErr, upErr?.message);
   const { error: attErr } = await cad.from('attachments').insert({
     lab_id: info.id, case_id: caseId, stage_id: S('CAD Design').id, category: 'cad_design',
-    file_name: 'design.stl', mime_type: 'model/stl', size_bytes: 26, storage_path: path, uploaded_by: ids.CAD01,
+    file_name: 'Dupont_Marie_1985 upper prep 16.stl', mime_type: 'model/stl', size_bytes: 26, storage_path: path, uploaded_by: ids.CAD01,
   });
   check('attachment metadata saved', !attErr, attErr?.message);
+  const { data: attRow } = await cad.from('attachments').select('file_name').eq('storage_path', path).single();
+  check('stored file name keeps only technical words', attRow?.file_name === 'cad_design_upper_prep_16.stl', attRow);
+  const { data: upHist } = await cad.from('case_history').select('data').eq('case_id', caseId).eq('event_type', 'file_uploaded');
+  check('history has no original file name', upHist.some((h) => h.data.file_name === 'cad_design_upper_prep_16.stl') && !JSON.stringify(upHist).toLowerCase().includes('dupont'), upHist);
   const { data: dl, error: dlErr } = await cam.storage.from('case-files').download(path);
   check('Milling can download the STL', !dlErr && (await dl.text()).startsWith('solid'), dlErr?.message);
   const { error: forgedUploader } = await cam.from('attachments').insert({
-    lab_id: info.id, case_id: caseId, category: 'other', file_name: 'x.pdf', size_bytes: 1,
-    storage_path: `${info.id}/${caseId}/x.pdf`, uploaded_by: ids.CAD01,
+    lab_id: info.id, case_id: caseId, category: 'other', file_name: 'x.stl', size_bytes: 1,
+    storage_path: `${info.id}/${caseId}/${crypto.randomUUID()}.stl`, uploaded_by: ids.CAD01,
   });
   check('cannot forge attachment uploader', !!forgedUploader);
   const { data: delOther } = await cam.from('attachments').delete().eq('storage_path', path).select();
@@ -313,6 +362,7 @@ async function main() {
   const today = new Date().toISOString().slice(0, 10);
   const { data: rep, error: repErr } = await admin.rpc('lab_report', { p_from: '2020-01-01', p_to: today });
   check('admin lab report', !repErr && rep.scope === 'lab' && rep.totals.delivered === 1 && rep.employees.length >= 5, repErr?.message ?? rep?.totals);
+  check('report case list has no patient column', rep.cases.length > 0 && rep.cases.every((c) => !('patient' in c) && 'clinic_order_ref' in c), rep.cases[0]);
   const { data: own } = await cad.rpc('lab_report', { p_from: '2020-01-01', p_to: today });
   check('technician report restricted to own work', own.scope === 'own' && own.employees.every((e) => e.code === 'CAD01'), own?.employees);
 
@@ -365,7 +415,7 @@ async function main() {
   check('create temporary employee', tmp.status === 201, tmp.body);
   await admin.from('employees').update({ phone: '+1111111', specialty: 'Temp CAD' }).eq('id', tmpId);
   const { data: tmpCase, error: tmpCaseErr } = await rec.rpc('create_case', { p: {
-    patient: { full_name: 'Privacy Patient' }, doctor_id: doctor.id, due_date: due,
+    doctor_id: doctor.id, due_date: due,
     restorations: [{ restoration_type_id: t('ANATOMIC_CROWN'), material_id: m('ZIRCONIA') }], teeth: [{ tooth_number: 11, restoration_index: 0 }],
   } });
   check('create case for privacy test', !tmpCaseErr && tmpCase, tmpCaseErr?.message);

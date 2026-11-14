@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Creates the demo laboratory used for store review (default code DEMO2026)
- * with clearly fictional employees, doctors and patients, and a few cases at
+ * with clearly fictional employees and doctors, and a few cases (no patient data) at
  * different production stages.
  *
  * It uses only the public API (edge functions + RPCs) exactly like the app,
@@ -111,17 +111,17 @@ const M = (c) => mats.find((x) => x.code === c).id;
 const day = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
 
 const cases = [
-  { patient: 'Demo Patient 1', doc: 1, type: 'ANATOMIC_CROWN', mat: 'ZIRCONIA', teeth: [26], due: 3, advance: 0 },
-  { patient: 'Demo Patient 2', doc: 2, type: 'VENEER', mat: 'EMAX', teeth: [11, 21], due: 4, advance: 1 },
-  { patient: 'Demo Patient 3', doc: 0, type: 'BRIDGE', mat: 'ZIRCONIA', teeth: [16, 17], bridge: true, due: 2, advance: 2, start: true, prio: 'urgent' },
-  { patient: 'Demo Patient 4', doc: 3, type: 'CUSTOM_ABUTMENT', mat: 'TITANIUM', teeth: [46], implant: true, due: 1, advance: 5 },
-  { patient: 'Demo Patient 5', doc: 0, type: 'FULL_CONTOUR_CROWN', mat: 'ZIRCONIA', teeth: [36], due: -1, advance: 0, prio: 'very_urgent' },
+  { ref: 'DEMO-ORD-001', doc: 1, type: 'ANATOMIC_CROWN', mat: 'ZIRCONIA', teeth: [26], due: 3, advance: 0 },
+  { ref: 'DEMO-ORD-002', doc: 2, type: 'VENEER', mat: 'EMAX', teeth: [11, 21], due: 4, advance: 1 },
+  { ref: 'DEMO-ORD-003', doc: 0, type: 'BRIDGE', mat: 'ZIRCONIA', teeth: [16, 17], bridge: true, due: 2, advance: 2, start: true, prio: 'urgent' },
+  { ref: 'DEMO-ORD-004', doc: 3, type: 'CUSTOM_ABUTMENT', mat: 'TITANIUM', teeth: [46], implant: true, due: 1, advance: 5 },
+  { ref: 'DEMO-ORD-005', doc: 0, type: 'FULL_CONTOUR_CROWN', mat: 'ZIRCONIA', teeth: [36], due: -1, advance: 0, prio: 'very_urgent' },
 ];
 const order = [['CAD01', 'CAD Design'], ['CAM01', 'Milling / CAM'], ['CER01', 'Ceramics'], ['FIN01', 'Finishing']];
 for (const c of cases) {
   const teeth = c.teeth.map((n) => ({ tooth_number: n, restoration_index: 0, bridge_group: c.bridge ? 1 : null, is_implant: !!c.implant }));
   const caseId = ok(await rec.rpc('create_case', { p: {
-    patient: { full_name: c.patient }, doctor_id: docs[c.doc].id, due_date: day(c.due), priority: c.prio ?? 'normal',
+    clinic_order_ref: c.ref, doctor_id: docs[c.doc].id, due_date: day(c.due), priority: c.prio ?? 'normal',
     assigned_technician_id: ids.CER01, shade: 'A2', notes: c.type === 'BRIDGE' ? 'Zirconia Monolithic – A2' : null,
     restorations: [{ restoration_type_id: T(c.type), material_id: M(c.mat), shade: 'A2' }], teeth,
     implants: c.implant ? [{ tooth_number: c.teeth[0], brand_name: 'Straumann', system_name: 'BLT', connection: 'CrossFit', platform: 'RC', diameter_mm: 4.1, length_mm: 10 }] : [],

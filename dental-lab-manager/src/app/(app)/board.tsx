@@ -45,7 +45,7 @@ export default function Board() {
             {cases.map((c) => (
               <Card key={c.id} onPress={() => router.push(`/case/${c.id}`)} style={{ padding: 12, marginBottom: 8 }}>
                 <Text style={styles.no}>{c.case_number}</Text>
-                <Text style={styles.patient} numberOfLines={1}>{c.patient?.full_name}</Text>
+                <Text style={styles.title} numberOfLines={1}>{c.doctor?.full_name}{c.clinic_order_ref ? ` · ${c.clinic_order_ref}` : ''}</Text>
                 <Text style={styles.small} numberOfLines={1}>{c.current?.name} · {c.current?.assignee?.full_name ?? t('case.unassigned')}</Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 }}>
                   <StatusBadge status={c.status} due={c.due_date} />
@@ -66,6 +66,6 @@ const styles = StyleSheet.create({
   colTitle: { color: colors.white, fontWeight: '800', flex: 1 },
   count: { color: colors.gold, fontWeight: '800' },
   no: { color: colors.gold, fontWeight: '800', writingDirection: 'ltr' },
-  patient: { color: colors.white, fontWeight: '700', fontSize: 15 },
+  title: { color: colors.white, fontWeight: '700', fontSize: 15 },
   small: { color: colors.muted, fontSize: 12 },
 });
