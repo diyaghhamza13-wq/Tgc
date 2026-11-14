@@ -1,6 +1,12 @@
-# Google Play Data Safety — DRAFT v2 answers for Phase 1
+# Google Play Data Safety — DRAFT v3 answers for Phase 1
 
 > **Status: draft for review. Nothing has been submitted.**
+> These answers describe the app **after** Phase 1 is deployed. Submit them only after
+> deployment, and after the approved privacy policy is published.
+>
+> **Changes since v2:**
+> - The backup project is marked as planned.
+> - The legacy photo/video row now follows your decision (no action on them).
 >
 > **Verification limits — please read:**
 > - Every answer below was **checked against the actual code**; the evidence column
@@ -34,8 +40,8 @@
 |---|---|---|---|
 | Collects or shares required user data types? | **Yes** | See section 2 | — |
 | All user data encrypted in transit? | **Yes** | `eas.json`: `EXPO_PUBLIC_SUPABASE_URL=https://…`; `supabase-js` uses HTTPS. No cleartext endpoints. | Data sent over TLS/HTTPS |
-| Users can request data deletion? | **Yes** | `profile.tsx` (Delete my account → `manage-employee` `delete_my_account`); lab profile (Delete this laboratory → `delete_lab`); privacy policy §7–8 | Google also asks for a **web link** where deletion can be requested. Use `https://dental-lab-manager.netlify.app/privacy`, which must contain the approved policy §7–8. **Verify** this satisfies the current account-deletion requirement. |
-| Data shared with third parties? | **No** | Only Supabase (hosting, backups) and Netlify (web) receive data, as service providers | Transfers to service providers that process data on your behalf are **not** "sharing". **Verify.** |
+| Users can request data deletion? | **Yes** | `profile.tsx` (Delete my account → `manage-employee` `delete_my_account`); lab profile (Delete this laboratory → `delete_lab`); privacy policy §7–8 | Google also asks for a **web link** where deletion can be requested. Use `https://dental-lab-manager.netlify.app/privacy`, which must contain the approved policy §7–8 (**not published yet**). **Verify** this satisfies the current account-deletion requirement. |
+| Data shared with third parties? | **No** | Only Supabase (hosting; and, **once created**, the separate backup project, which holds encrypted database backups) and Netlify (web) receive data, as service providers | Transfers to service providers that process data on your behalf are **not** "sharing". **Verify.** |
 
 ## Section 2 — Data types
 
@@ -60,7 +66,7 @@
 | Type | Answer | Req./opt. | Purposes | Evidence | Notes |
 |---|---|---|---|---|---|
 | Photos | **Collected** | Optional | App functionality | `profile.tsx:41` (profile photo), `admin/lab.tsx:57` (lab logo); `expo-image-picker` gallery only, camera disabled (`app.json`); permission text corrected to "only to set your profile picture and your laboratory logo" | Case photos are rejected by this version. |
-| Videos | **Not collected** | — | — | Upload whitelist: STL/PLY/OBJ/3MF/DCM (`files.ts`, attachments trigger, storage policy) | 1 legacy MP4 remains stored (administrators only, name removed). See report §3.4. |
+| Videos | **Not collected** by this version | — | — | Upload whitelist: STL/PLY/OBJ/3MF/DCM (`files.ts`, attachments trigger, storage policy) | 1 legacy MP4 remains stored, visible to administrators only. It is left untouched per your instruction. See report §3.4. |
 
 ### Audio, files, calendar, contacts
 | Type | Answer | Evidence |
@@ -98,7 +104,8 @@
 ## Decisions for you
 1. **D1 — Health info:** recommended **Collected** (see the row above).
 2. **D2 — Legacy photos and video:** see pre-deployment report §3.4.
-   - If they are deleted by their laboratories before you submit, the answers above are
+   - Per your instruction, nobody on the operator side modifies or deletes them.
+   - If their laboratories delete them before you submit, the answers above are
      complete.
    - If they are kept, they are stored data but not collected by this version. Ticking
      Photos (already Yes) covers photos. For the video, the strictly conservative choice

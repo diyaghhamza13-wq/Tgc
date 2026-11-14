@@ -5,9 +5,14 @@
  * history and audit logs. File contents are not changed and nothing is deleted.
  *
  *   SUPABASE_URL=https://<ref>.supabase.co SUPABASE_SERVICE_ROLE_KEY=... \
- *   [APPLY=1] node scripts/redact-legacy-files.mjs
+ *   [APPLY=1] [INCLUDE_SENSITIVE=1] node scripts/redact-legacy-files.mjs
  *
  * Without APPLY=1 it is a dry run: it only counts what would change.
+ * By default, legacy SENSITIVE files (photos, videos, CBCT, PDFs and anything
+ * that is not a 3D production file) are SKIPPED: their storage objects, rows,
+ * history and audit entries are not touched. INCLUDE_SENSITIVE=1 includes them
+ * (requires an explicit decision). Reversible with
+ * scripts/reverse-legacy-file-names.mjs and a backup taken BEFORE this run.
  * It never prints file names, paths or keys — only attachment ids and counts.
  *
  * For each legacy attachment whose storage object still carries its original
@@ -23,6 +28,7 @@ import crypto from 'node:crypto';
 const URL = process.env.SUPABASE_URL;
 const KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const APPLY = process.env.APPLY === '1';
+const INCLUDE_SENSITIVE = process.env.INCLUDE_SENSITIVE === '1';
 if (!URL || !KEY) {
   console.error('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required');
   process.exit(2);
@@ -38,16 +44,22 @@ async function call(method, path, body) {
 }
 const move = (from, to) => call('POST', '/storage/v1/object/move', { bucketId: 'case-files', sourceKey: from, destinationKey: to });
 
-const rows = await call('GET', '/rest/v1/attachments?select=id,lab_id,case_id,storage_path&order=created_at');
-const legacy = rows.filter((r) => !ANON_PATH.test(r.storage_path));
-console.log(`attachments: ${rows.length}, with original names in storage path: ${legacy.length}${APPLY ? '' : ' (dry run)'}`);
+// same rule as public.is_legacy_sensitive_file()
+const ext = (n) => (/\.([A-Za-z0-9]+)$/.exec(n ?? '')?.[1] ?? '').toLowerCase();
+const sensitive = (r) => ['photo', 'cbct', 'prescription'].includes(r.category) || !['stl', 'ply', 'obj', '3mf', 'dcm'].includes(ext(r.file_name));
+
+const rows = await call('GET', '/rest/v1/attachments?select=id,lab_id,case_id,category,file_name,storage_path&order=created_at');
+const named = rows.filter((r) => !ANON_PATH.test(r.storage_path));
+const skipped = INCLUDE_SENSITIVE ? [] : named.filter(sensitive);
+const legacy = named.filter((r) => !skipped.includes(r));
+console.log(`attachments: ${rows.length}, with original names in storage path: ${named.length}, to rename: ${legacy.length}, sensitive skipped: ${skipped.length}${APPLY ? '' : ' (dry run)'}`);
 
 let moved = 0;
 let failed = 0;
 for (const r of legacy) {
   const m = /\.([A-Za-z0-9]{1,8})$/.exec(r.storage_path);
-  const ext = m ? m[1].toLowerCase() : 'bin';
-  const to = `${r.lab_id}/${r.case_id}/${crypto.randomUUID()}.${ext}`;
+  const newExt = m ? m[1].toLowerCase() : 'bin';
+  const to = `${r.lab_id}/${r.case_id}/${crypto.randomUUID()}.${newExt}`;
   if (!APPLY) continue;
   try {
     await move(r.storage_path, to);
@@ -57,7 +69,7 @@ for (const r of legacy) {
     continue;
   }
   try {
-    await call('POST', '/rest/v1/rpc/redact_legacy_attachment', { p_attachment_id: r.id, p_new_path: to });
+    await call('POST', '/rest/v1/rpc/redact_legacy_attachment', { p_attachment_id: r.id, p_new_path: to, p_include_sensitive: INCLUDE_SENSITIVE });
     moved++;
     console.log(`  ✓ ${r.id}: renamed`);
   } catch (e) {
@@ -67,7 +79,7 @@ for (const r of legacy) {
   }
 }
 if (APPLY) {
-  const res = await call('POST', '/rest/v1/rpc/redact_legacy_file_names', {});
+  const res = await call('POST', '/rest/v1/rpc/redact_legacy_file_names', { p_include_sensitive: INCLUDE_SENSITIVE });
   console.log(`renamed objects: ${moved}, failures: ${failed}, scrub: ${JSON.stringify(res)}`);
 }
 process.exit(failed ? 1 : 0);

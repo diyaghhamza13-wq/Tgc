@@ -438,10 +438,14 @@ create policy case_files_read on storage.objects for select to authenticated
 -- 8. Redaction of original legacy file names (maintenance; service role only).
 --    Run by scripts/redact-legacy-files.mjs AFTER this migration:
 --      a) the script moves each legacy storage object to <lab>/<case>/<uuid>.<ext>
---         with the Storage API, then calls redact_legacy_attachment(id, new_path);
---      b) it finally calls redact_legacy_file_names() for history and audit rows.
---    The file contents are not changed and nothing is deleted. Original names
---    are replaced by technical labels (irreversible, except from a backup).
+--         with the Storage API, then calls redact_legacy_attachment(id, new_path, …);
+--      b) it finally calls redact_legacy_file_names(…) for history and audit rows.
+--    Legacy SENSITIVE files (photos, videos, CBCT, PDFs, … — see
+--    is_legacy_sensitive_file) are EXCLUDED unless p_include_sensitive is true:
+--    their objects, rows, history and audit entries are then left untouched.
+--    File contents are never changed and nothing is deleted. The operation can
+--    be reversed from a backup taken before it (restore_legacy_file_records +
+--    scripts/reverse-legacy-file-names.mjs).
 create or replace function public._redacted_path(p_path text)
 returns text language sql immutable set search_path = '' as $$
   -- <lab>/<case>/<anything>.<ext> -> <lab>/<case>/redacted.<ext>
@@ -453,7 +457,7 @@ returns text language sql immutable set search_path = '' as $$
   end;
 $$;
 
-create or replace function public.redact_legacy_file_names()
+create or replace function public.redact_legacy_file_names(p_include_sensitive boolean default false)
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare
   v_att integer; v_hist integer; v_audit integer;
@@ -461,17 +465,20 @@ begin
   -- attachment rows: technical label instead of the original name
   update public.attachments
      set file_name = public._safe_file_label(file_name, category)
-   where file_name is distinct from public._safe_file_label(file_name, category);
+   where file_name is distinct from public._safe_file_label(file_name, category)
+     and (p_include_sensitive or not public.is_legacy_sensitive_file(category, file_name));
   get diagnostics v_att = row_count;
-  -- the UPDATE above is audited with the old name: scrub audit rows afterwards
   update public.case_history
      set data = data || jsonb_build_object('file_name',
            public._safe_file_label(data->>'file_name', coalesce(data->>'category', 'other')))
    where event_type in ('file_uploaded', 'file_deleted')
      and data ? 'file_name'
      and data->>'file_name' is distinct from
-         public._safe_file_label(data->>'file_name', coalesce(data->>'category', 'other'));
+         public._safe_file_label(data->>'file_name', coalesce(data->>'category', 'other'))
+     and (p_include_sensitive
+          or not public.is_legacy_sensitive_file(coalesce(data->>'category', 'other'), data->>'file_name'));
   get diagnostics v_hist = row_count;
+  -- runs last: also scrubs the audit rows created by the UPDATEs above
   update public.audit_logs l
      set old_data = case when l.old_data is null then null else l.old_data
            || jsonb_build_object('file_name', public._safe_file_label(l.old_data->>'file_name', coalesce(l.old_data->>'category', 'other')),
@@ -481,16 +488,20 @@ begin
            || jsonb_build_object('file_name', public._safe_file_label(l.new_data->>'file_name', coalesce(l.new_data->>'category', 'other')),
                                  'storage_path', coalesce((select a.storage_path from public.attachments a where a.id::text = l.record_id),
                                                           public._redacted_path(l.new_data->>'storage_path'))) end
-   where l.table_name = 'attachments';
+   where l.table_name = 'attachments'
+     and (p_include_sensitive
+          or not public.is_legacy_sensitive_file(
+                   coalesce(l.new_data, l.old_data)->>'category', coalesce(l.new_data, l.old_data)->>'file_name'));
   get diagnostics v_audit = row_count;
   return jsonb_build_object('attachments', v_att, 'history', v_hist, 'audit_rows', v_audit);
 end;
 $$;
-revoke execute on function public.redact_legacy_file_names() from public, anon, authenticated;
-grant execute on function public.redact_legacy_file_names() to service_role;
+revoke execute on function public.redact_legacy_file_names(boolean) from public, anon, authenticated;
+grant execute on function public.redact_legacy_file_names(boolean) to service_role;
 
 -- Called after the Storage API moved the object from its old to its new name.
-create or replace function public.redact_legacy_attachment(p_attachment_id uuid, p_new_path text)
+create or replace function public.redact_legacy_attachment(
+  p_attachment_id uuid, p_new_path text, p_include_sensitive boolean default false)
 returns void language plpgsql security definer set search_path = '' as $$
 declare
   a public.attachments;
@@ -499,12 +510,55 @@ begin
   if a.id is null then
     raise exception 'attachment_not_found' using errcode = 'P0002';
   end if;
+  if not p_include_sensitive and public.is_legacy_sensitive_file(a.category, a.file_name) then
+    raise exception 'sensitive_file_excluded' using errcode = 'P0001';
+  end if;
   if p_new_path !~ ('^' || a.lab_id || '/' || a.case_id || '/[0-9a-f-]{36}\.[a-z0-9]{1,8}$') then
     raise exception 'invalid_new_path' using errcode = 'P0001';
   end if;
   update public.attachments set storage_path = p_new_path where id = a.id;
-  perform public.redact_legacy_file_names();
+  perform public.redact_legacy_file_names(p_include_sensitive);
 end;
 $$;
-revoke execute on function public.redact_legacy_attachment(uuid, text) from public, anon, authenticated;
-grant execute on function public.redact_legacy_attachment(uuid, text) to service_role;
+revoke execute on function public.redact_legacy_attachment(uuid, text, boolean) from public, anon, authenticated;
+grant execute on function public.redact_legacy_attachment(uuid, text, boolean) to service_role;
+
+-- Reverse: put back the exact values from a backup taken BEFORE the redaction.
+-- Called by scripts/reverse-legacy-file-names.mjs after it has moved the storage
+-- objects back. Only rows passed in are touched, only file-related fields:
+--   p_attachments: [{id, storage_path, file_name}]   (original values)
+--   p_history:     [{id, data}]                      (file_uploaded / file_deleted rows)
+--   p_audit:       [{id, old_data, new_data}]        (audit rows of table attachments)
+create or replace function public.restore_legacy_file_records(p_attachments jsonb, p_history jsonb, p_audit jsonb)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare
+  v_att integer; v_hist integer; v_audit integer;
+begin
+  update public.attachments a
+     set storage_path = x->>'storage_path', file_name = x->>'file_name'
+    from jsonb_array_elements(coalesce(p_attachments, '[]')) x
+   where a.id = (x->>'id')::uuid
+     and (x->>'storage_path') like a.lab_id || '/' || a.case_id || '/%'
+     and (a.storage_path, a.file_name) is distinct from (x->>'storage_path', x->>'file_name');
+  get diagnostics v_att = row_count;
+  update public.case_history h
+     set data = coalesce(nullif(x->'data', 'null'::jsonb), '{}'::jsonb)
+    from jsonb_array_elements(coalesce(p_history, '[]')) x
+   where h.id = (x->>'id')::uuid
+     and h.event_type in ('file_uploaded', 'file_deleted')
+     and h.data is distinct from coalesce(nullif(x->'data', 'null'::jsonb), '{}'::jsonb);
+  get diagnostics v_hist = row_count;
+  update public.audit_logs l
+     -- JSON null in the backup means SQL NULL (e.g. new_data of a DELETE row)
+     set old_data = nullif(x->'old_data', 'null'::jsonb), new_data = nullif(x->'new_data', 'null'::jsonb)
+    from jsonb_array_elements(coalesce(p_audit, '[]')) x
+   where l.id = (x->>'id')::bigint
+     and l.table_name = 'attachments'
+     and (l.old_data, l.new_data) is distinct from
+         (nullif(x->'old_data', 'null'::jsonb), nullif(x->'new_data', 'null'::jsonb));
+  get diagnostics v_audit = row_count;
+  return jsonb_build_object('attachments', v_att, 'history', v_hist, 'audit_rows', v_audit);
+end;
+$$;
+revoke execute on function public.restore_legacy_file_records(jsonb, jsonb, jsonb) from public, anon, authenticated;
+grant execute on function public.restore_legacy_file_records(jsonb, jsonb, jsonb) to service_role;

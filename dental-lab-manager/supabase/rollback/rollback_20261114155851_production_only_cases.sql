@@ -309,7 +309,9 @@ $$;
 
 -- legacy-file access rule and redaction helpers (section 7–8 of the migration).
 -- NOTE: file names already redacted by scripts/redact-legacy-files.mjs are NOT
--- restored by this script (only the encrypted backup holds the originals).
+-- restored by this script. Run scripts/reverse-legacy-file-names.mjs FIRST
+-- (it needs restore_legacy_file_records, dropped below, and a backup taken
+-- before the redaction).
 drop policy if exists attachments_select on public.attachments;
 create policy attachments_select on public.attachments for select to authenticated
   using (lab_id = public.current_lab_id() and public.can_view_case(case_id));
@@ -322,8 +324,9 @@ create policy case_files_read on storage.objects for select to authenticated
   );
 drop function if exists public.can_read_case_object(text);
 drop function if exists public.is_legacy_sensitive_file(text, text);
-drop function if exists public.redact_legacy_attachment(uuid, text);
-drop function if exists public.redact_legacy_file_names();
+drop function if exists public.redact_legacy_attachment(uuid, text, boolean);
+drop function if exists public.redact_legacy_file_names(boolean);
+drop function if exists public.restore_legacy_file_records(jsonb, jsonb, jsonb);
 drop function if exists public._redacted_path(text);
 
 -- migration history: mark 20261114155851 as not applied

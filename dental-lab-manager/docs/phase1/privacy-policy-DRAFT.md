@@ -1,18 +1,20 @@
-# Privacy Policy — DRAFT v2 for Phase 1 (not published)
+# Privacy Policy — DRAFT v3 for Phase 1 (not published)
 
 > **Status: draft for review.** Not live. The in-app policy (`src/lib/privacy.ts`, shown at
 > `/privacy`) and any external page stay unchanged until you approve this text.
 > `[DEPLOYMENT DATE]` must be replaced by the real date Phase 1 goes live.
 > French and Arabic versions will be translated from the approved English text.
 >
-> **Changes since v1:**
-> - Laboratories can no longer see earlier patient names in the app; this is now stated
->   plainly.
-> - The manual request process is described without promising any app feature that does
->   not exist.
-> - Earlier files are now visible to administrators only, and their original file names
->   are removed.
-> - Encrypted backups and their retention are disclosed.
+> **Editing markers — remove them before publishing:**
+> - `[[IF ACTIVE: … ]]`: publish the text inside **only** once that safeguard is
+>   really in operation. Otherwise delete the whole block.
+> - `[[CHOOSE: A | B]]`: keep the option that matches your decision.
+>
+> **Changes since v2:**
+> - The private backup key belongs only to the operator and never to a developer.
+> - Backups and their retention are marked as conditional (not yet active).
+> - Backups are stated to contain the database only: no files, no login accounts.
+> - Legacy file names follow your decision on photos and videos.
 
 ---
 
@@ -20,10 +22,10 @@
 Last updated: [DEPLOYMENT DATE]
 
 Dental Lab Manager is a production and workflow management application for dental
-laboratories, developed by Hamza Diyagh. It is used to follow manufacturing orders
-(crowns, bridges, abutments, etc.) through the laboratory's production stages. It is not
-a patient record system and it does not provide diagnosis, treatment advice or any
-clinical function. This policy explains which data the app processes, why, and what
+laboratories, developed and operated by Hamza Diyagh. It is used to follow manufacturing
+orders (crowns, bridges, abutments, etc.) through the laboratory's production stages. It
+is not a patient record system and it does not provide diagnosis, treatment advice or
+any clinical function. This policy explains which data the app processes, why, and what
 rights you have.
 
 ## 1. Who is responsible
@@ -32,9 +34,9 @@ Each laboratory that registers in the app decides which data it enters about its
 employees and clients (dentists and clinics), and is responsible for that data (data
 controller).
 
-Hamza Diyagh provides and operates the application and processes this data only on behalf
-of the laboratories, to provide the service (data processor). Contact:
-diyaghhamza13@gmail.com.
+Hamza Diyagh (the operator) provides and operates the application and processes this
+data only on behalf of the laboratories, to provide the service (data processor).
+Contact: diyaghhamza13@gmail.com.
 
 ## 2. Data we process
 
@@ -82,17 +84,24 @@ deleted. It is handled as follows.
     the laboratory's administrators.**
   - They remain linked to the cases they were entered for, and they are deleted
     automatically if the laboratory deletes its account.
-  - A laboratory that needs to see a copy of its earlier patient names, or wants them
-    deleted, must ask us (see section 7).
+  - A laboratory that needs a copy of its earlier patient names, or wants them deleted,
+    must ask the operator (see section 7).
 - **Earlier attached files**
   - Photos, videos, CBCT/DICOM images, PDFs and other files that are not 3D production
     files can now be seen and downloaded **only by the laboratory's administrators.**
     The administrators can review them and delete them in the app.
   - Earlier 3D production files remain available to the employees who work on the case.
-  - The original names of earlier files have been replaced by technical labels (for
-    example "photo.jpg"). This applies to the app, the stored file locations, the
-    production history and the audit logs. The content of the files has not been
-    changed.
+  - **The content of earlier files has not been changed.**
+  - [[CHOOSE:
+    - **A (all earlier files):** The original names of earlier files have been replaced
+      by technical labels (for example "photo.jpg"). This applies to the app, the stored
+      file locations, the production history and the audit logs.
+    - **B (3D files only):** The original names of earlier 3D production files have been
+      replaced by technical labels in the app, the stored file locations, the production
+      history and the audit logs. Earlier photos, videos and other non-3D files keep
+      their original file names. These names are visible only to the laboratory's
+      administrators.
+    ]]
 
 ## 4. Why we use it
 
@@ -116,14 +125,22 @@ laboratory's data. Inside a laboratory, access depends on each employee's role a
 permissions. Files are private and can only be opened by authorised employees through
 temporary links. All connections are encrypted (HTTPS).
 
+[[IF ACTIVE:
 **Backups.** We keep encrypted backups of the database:
-- in a separate Supabase project in the same region (London);
-- the backup file cannot be read without a private key held only by the developer;
-- backups are kept for at most 30 days, then deleted.
+- **What they contain:** the database only, meaning laboratories, employees, dentists,
+  cases and their history, including earlier patient names. Uploaded files and login
+  accounts are **not** part of these backups.
+- **Where:** in a separate Supabase project in the same region (London).
+- **Encryption:** each backup is encrypted in memory by the export program, before it
+  is stored anywhere. It can only be decrypted with a private key that belongs to the
+  operator and is kept on the operator's own device. **The key is never given to any developer, contractor,
+  automated assistant or hosting provider.**
+- **Retention:** backups are deleted after at most 30 days.
+]]
 
-**Developer access.** As the operator, the developer has technical access to the
-database. This access is used only to run, secure and repair the service, and to carry
-out the requests described in section 7.
+**Operator access.** As the operator, Hamza Diyagh has technical access to the database.
+This access is used only to run, secure and repair the service, and to carry out the
+requests described in section 7.
 
 ## 6. Health-related information
 
@@ -146,25 +163,26 @@ The app shows these reminders where text is entered, but it cannot check free te
 ## 7. Requests about earlier patient names and other data
 
 The app has **no button** for exporting or deleting earlier patient names. Requests are
-handled **manually** by the developer:
+handled **manually** by the operator:
 
 1. **Who can ask:** the laboratory's administrator. Write to diyaghhamza13@gmail.com
    with the laboratory code and the request: a copy of the earlier patient names, or
    their deletion.
-2. **Verification:** before doing anything, we confirm the request with the laboratory
-   using the contact details registered for the laboratory in the app. We do not act on
-   a request we cannot confirm.
-3. **A copy:** we prepare an encrypted file with the laboratory's earlier patient names
-   and the case numbers they belong to. We send it in a way agreed with the laboratory,
-   and the password separately. We never send patient names in a plain e-mail.
-4. **Deletion:** we delete the laboratory's earlier patient names from the database. The
-   cases themselves (manufacturing data) remain. Copies in backups disappear when those
-   backups expire (section 5).
-5. **Timing:** we answer within 30 days.
+2. **Verification:** before doing anything, the operator confirms the request with the
+   laboratory using the contact details registered for the laboratory in the app. A
+   request that cannot be confirmed is not carried out.
+3. **A copy:** the operator prepares an encrypted file with the laboratory's earlier
+   patient names and the case numbers they belong to. It is sent in a way agreed with
+   the laboratory, with the password sent separately. Patient names are never sent in a
+   plain e-mail.
+4. **Deletion:** the operator deletes the laboratory's earlier patient names from the
+   database. The cases themselves (manufacturing data) remain.
+   [[IF ACTIVE: Copies in backups disappear when those backups expire (section 5).]]
+5. **Timing:** the operator answers within 30 days.
 
-**Patients** cannot be identified by us; we hold no patient contact details. A patient
-should contact their dentist or the laboratory, which can then ask us as described
-above.
+**Patients** cannot be identified by the operator, who holds no patient contact
+details. A patient should contact their dentist or the laboratory, which can then make
+the request described above.
 
 ## 8. How long data is kept
 
@@ -173,15 +191,16 @@ Data is kept as long as the laboratory uses the service.
 - A laboratory administrator can delete the whole laboratory and all its data,
   including files, accounts and any earlier patient names (Lab profile → Delete this
   laboratory).
-- Deletion is permanent. Copies in backups are removed when those backups expire, after
-  at most 30 days.
+- Deletion is permanent.
+  [[IF ACTIVE: Copies in database backups are removed when those backups expire, after
+  at most 30 days.]]
 
 ## 9. Your rights
 
 You can ask to access, correct or delete your personal data:
 - **Employees:** through their laboratory administrator, or directly in the app.
 - **Dentists and patients:** contact the laboratory that holds the data; the laboratory
-  can ask us as described in section 7.
+  can ask the operator as described in section 7.
 
 You can also write to diyaghhamza13@gmail.com.
 
@@ -197,15 +216,16 @@ If this policy changes, the new version is published on this page with its updat
 
 ## Reviewer notes (not part of the policy)
 
-| Statement | Basis (checked 2026-11-14) |
-|---|---|
-| No patient name, birth year, gender or notes collected | Migration `20261114155851` §3: `create_case` rejects `patient`/`patient_id`; wizard has no such field |
-| Lab users (including administrators) cannot see earlier patient names | Migration §2: all privileges on `patients` revoked from `anon`/`authenticated`, policies dropped; tested (`patients table not readable by the app`) |
-| Only 3D production files accepted | Rules enforced in three places: `files.ts`, the attachments trigger, and the storage insert policy (migration §5); tested |
-| Earlier non-3D files visible to administrators only | Migration §7: `attachments_select` + `case_files_read` require `attachments.delete_any` for legacy sensitive files; tested (technician cannot list or download, administrator can) |
-| Original file names replaced everywhere | Migration §8 + `scripts/redact-legacy-files.mjs` (moves storage objects, scrubs rows, history and audit); tested: 0 occurrences left, signed URL anonymous. **Runs only at deployment, with approval.** |
-| Earlier patient names deleted on lab deletion | `patients.lab_id` foreign key `on delete cascade` |
-| Manual copy/deletion process | No app function. Done by the developer via the Supabase dashboard. A deletion must first clear `cases.patient_id` for that lab (foreign key), then delete `patients` rows. **You must be able to honour the 30-day and verification promises before publishing.** |
-| Encrypted backups ≤ 30 days in a separate project | `docs/backup/README.md`. **True only once the backup project exists and you delete old backups.** Otherwise remove this paragraph. |
-| No analytics/tracking | `package.json`: no analytics, crash-reporting or push SDK; `expo-updates` has no update URL configured, so it makes no update checks |
-| Provider server logs (IP) | Supabase/Netlify platform logs; not used by the app |
+| Statement | Basis (checked 2026-11-14) | Status |
+|---|---|---|
+| No patient name, birth year, gender or notes collected | Migration `20261114155851` §3: `create_case` rejects `patient`/`patient_id`; wizard has no such field | Tested locally; **active only after deployment** |
+| Lab users (including administrators) cannot see earlier patient names | Migration §2: privileges on `patients` revoked, policies dropped | Tested locally; active only after deployment |
+| Only 3D production files accepted | Rules enforced in three places: `files.ts`, the attachments trigger, and the storage insert policy (migration §5) | Tested locally; active only after deployment |
+| Earlier non-3D files visible to administrators only | Migration §7 | Tested locally; active only after deployment |
+| Earlier file names replaced (option A or B) | Migration §8 + `scripts/redact-legacy-files.mjs` (default = B; `INCLUDE_SENSITIVE=1` = A). Reversible with `scripts/reverse-legacy-file-names.mjs` and a backup taken before. | Tested locally (forward + reverse); **runs only with your approval**; choose A or B |
+| Earlier patient names deleted on lab deletion | `patients.lab_id` foreign key `on delete cascade` | Active today |
+| Manual copy/deletion process | No app function. Done by the operator via the Supabase dashboard. A deletion must first clear `cases.patient_id` for that lab (foreign key), then delete `patients` rows. | **Organisational promise.** Publish only if you can honour the verification and the 30 days. |
+| Backups (database only, encrypted, key with the operator, ≤ 30 days) | `docs/backup/README.md` | **Planned, not active.** No backup project, key or backup exists yet. Keep the `[[IF ACTIVE]]` blocks out until all are true. |
+| Private key never held by any developer or assistant | The export encrypts to the operator's *public* key. Decryption (restore, reverse) runs on the operator's phone. Claude never receives the private key. | Design rule |
+| No analytics/tracking | `package.json`: no analytics, crash-reporting or push SDK; `expo-updates` has no update URL | Active today |
+| Provider server logs (IP) | Supabase/Netlify platform logs; not used by the app | Active today (provider) |
