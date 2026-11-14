@@ -1,247 +1,320 @@
-# Encrypted database backup (B2) — destination, setup, export, restore, reverse
+# Encrypted database backup (B2) — phone-based export, restore and reverse
 
 > **Status (2026-11-14): designed and tested on the local stack only. Nothing is
 > active in production:**
+> - no read-only backup login exists;
 > - no backup project exists;
 > - no key pair exists;
-> - no backup has been made;
-> - no retention is running.
+> - no backup has been made.
 >
-> Nothing in this procedure sends backup data, keys or passphrases through a chat, an
-> e-mail or this repository.
+> **Principle:** production data is exported and encrypted **on the operator's own
+> phone**. No cloud session or AI assistant ever handles backup data, backup files,
+> keys or passwords. Nothing in this procedure goes through a chat, an e-mail or this
+> repository.
 
-## 0. Safeguard status
+## 0. Status of each part
 
-| Safeguard | Status |
+| Part | Status |
 |---|---|
-| Export, encryption, upload and restore scripts | Written and **tested locally** |
-| Insert-only bucket rule | **Tested locally** |
-| Separate backup project in Supabase | **Planned**: you create it (§3) |
-| Your key pair | **Planned**: you create it on your phone (§3) |
-| First production backup | **Planned**: only after your approval |
-| Upload to the hosted backup project | **Untested** until the first real upload |
-| 30-day retention | **Planned**: a manual deletion by you; nothing automatic |
-| Restore and reverse on your phone (Termux) | Same scripts as tested locally; **not yet run on your phone** |
+| Scripts: `termux-check.sh`, `check-connection.mjs`, `export.mjs`, `verify.mjs`, `upload.mjs`, `restore.mjs`, `reverse-legacy-file-names.mjs` | Written and **tested locally** (§9) |
+| Read-only backup login `dlm_backup_reader` (§4) | **Proposal**, tested locally; **not created in production** (needs your approval) |
+| Your key pair (§5) | **Planned**: you create it on your phone |
+| Running the scripts in Termux on your phone | **Not yet done**; check with §5 first |
+| Connection from your phone to Supabase (direct or pooler) | **Untested** until §5.5 |
+| Separate backup project (§7) | **Optional**, not created |
+| 30-day retention | **Planned**: manual deletion by you; nothing automatic |
 
-## 1. Who holds what
+## 1. Architecture
 
-- **The private key belongs to you (the operator) and stays on your phone**, plus an
-  offline copy you keep.
-- It is **never** given to any developer, contractor, AI assistant (including Claude),
-  hosting provider, chat or repository.
-- Decrypting a backup (for a restore or a reverse) therefore happens **only on your
-  phone.**
+```
+Your Android phone (Termux)
+  check-connection.mjs ── metadata only ──┐
+  export.mjs ── read-only login, TLS ─────┼──► Supabase Postgres (app project)
+        │  one read-only SELECT; data held in the phone's memory only
+        ▼
+  encrypted to YOUR PUBLIC key  →  ~/dlm-backups/<stamp>-<id>.json.age  (+ .manifest.json)
+        │
+        ├─ verify.mjs (decrypts into a pipe, never to disk)
+        ├─ keep it locally; copy the encrypted file to your Google Drive (manual)
+        └─ OPTIONAL: upload.mjs → separate backup project, insert-only bucket
+
+Claude's cloud session: not involved. It never receives the data, the file, the key or any password.
+```
+
+**The cloud-session export is no longer a supported method.** `export.mjs` refuses the
+Management API source unless `ALLOW_CLOUD_EXPORT=1` is set on purpose. That mode remains
+in the code only for emergencies; it would expose plaintext to whoever runs it.
+
+## 2. Who holds what
 
 | Item | Where it lives | Who has it |
 |---|---|---|
-| Backup files | `age`-encrypted, in the backup project's private bucket | Readable only with your private key |
-| **Private key** (`AGE-SECRET-KEY-1…`) | Your phone (Termux) + your offline copy | **Only you** |
-| Public key (`age1…`) | You give it to me in chat; it only allows encrypting | Anyone; not a secret |
-| Upload key (backup project's anon/publishable key) | Secure credential form; the proxy injects it | Not visible to Claude, never in chat |
-| App project service-role key (needed only for a reverse) | Copied by you from the dashboard into Termux on your phone | Only you |
+| **Private key** (`AGE-SECRET-KEY-1…`) | Your phone (Termux) + your offline copy | **Only you.** Never given to any developer, contractor, AI assistant (including Claude), hosting provider, chat or repository |
+| Public key (`age1…`) | Your phone; may be shared; it only allows encrypting | Anyone; not a secret |
+| Read-only backup login password | Typed by you when exporting (`read -rs PGPASSWORD`); never stored in a file | Only you |
+| Encrypted backup files | `~/dlm-backups` on your phone; optional copies in your Google Drive or backup project | Readable only with your private key |
+| Backup project upload key (optional) | Typed by you when uploading (`read -rs BACKUP_APIKEY`) | Only you |
+| App project service-role key (only for a reverse, §8) | Typed by you in Termux when needed | Only you |
 
-**Being transparent about the export step:**
-- The export runs in this cloud session. It reads the production data in plaintext,
-  **in memory**, then encrypts it. That is the same read access this session already has
-  through the Management API.
-- No plaintext copy is written to disk. The session never has the private key, so it
-  cannot decrypt the backup afterwards.
+## 3. What the backup contains, and what it does not
 
-## 2. What the backup contains, and what it does not
-
-**Contains** (from one consistent snapshot):
-- every row of all 29 tables in the app's main database schema (`public`): laboratories,
+**Contains** (one consistent snapshot):
+- every row of all 29 tables in the app's main schema (`public`): laboratories,
   employees, PIN *hashes*, dentists, cases, teeth, implants, restorations, workflow,
   history, attachment *records*, notifications, QC, deliveries, audit logs, catalogs,
   **and the 15 legacy patient names**;
 - the migration history;
-- the *list* of storage objects (names, sizes, dates).
+- the *list* of stored files (names, sizes, dates).
 
 **Does NOT contain:**
 
-| Excluded | What that means |
+| Excluded | Consequence |
 |---|---|
-| **File contents** (STL scans, the legacy photos and video, logos, profile photos; ≈ 34 MB today) | If a stored file is lost or deleted, this backup **cannot bring it back**. It only knows the file existed. The migration and the renaming scripts never change file contents. |
-| **Supabase Auth accounts** (the login accounts behind employees) | The backup does not save or restore logins. A restore expects those accounts to still exist. If an employee's login account is missing, the restore **stops without changing anything**: one transaction. Recovering accounts is a separate, manual step (recreate the employee or reset the PIN). |
-| Database structure, functions and policies | Rebuilt from the repository's migrations. The backup records which migrations were applied, and the restore refuses to run on a different version. |
-| Supabase project settings, secrets, Edge Functions, the Netlify site | Not data; managed separately. |
+| **File contents** (STL scans, legacy photos and video, logos, profile photos) | A lost or deleted stored file **cannot be recovered** from this backup |
+| **Supabase Auth login accounts** | Not saved or restored. A restore expects them to still exist; if one is missing, the restore **stops and changes nothing** (tested). Accounts are then recreated manually. |
+| Database structure, functions, policies | Rebuilt from the repository's migrations. The restore refuses a different migration version. |
+| Project settings, secrets, Edge Functions, the Netlify site | Not data; managed separately |
 
-## 3. One-time setup (by you, on your phone; ≈ 15 minutes)
+## 4. The read-only backup login (`dlm_backup_reader`)
 
-**Requires Android.** Termux does not exist on iPhone.
+**Proposal:** `docs/backup/readonly-role-setup.sql`. It is **not a migration** and
+**not applied in production.**
 
-**A. Create the separate backup project** (phone browser)
-1. Go to supabase.com/dashboard → **New project**.
-2. **Name:** `dlm-backups`.
-3. **Database password:** tap **Generate**, save it in your password manager, never send
-   it.
-4. **Region:** West EU (London).
-5. **Plan:** Free → **Create new project**. Wait 1–2 minutes.
+**Exact permissions**
 
-**B. Create the insert-only bucket**
-1. In the new project: **SQL Editor → New query**.
-2. Paste `docs/backup/backup-project-setup.sql` → **Run**. Expect "Success. No rows
-   returned".
-3. **Storage** should now show a private bucket `dlm-backups`.
+| Object | Privilege | Why |
+|---|---|---|
+| Login attribute `BYPASSRLS` | Bypasses row-level security | Without it, row-level security would hide every row: the backup would be empty |
+| Schema `public`, all tables | `USAGE`, `SELECT` (and `SELECT` on future tables via default privileges) | Read every row |
+| `supabase_migrations.schema_migrations` | `SELECT` | Record which schema version the backup belongs to |
+| `storage.objects` | `SELECT` | The list of stored files (names, sizes), not their contents |
+| Setting `default_transaction_read_only = on` | — | Extra guard: every session starts read-only |
+| `statement_timeout = 5min`, `connection limit 2` | — | Limit runaway or parallel use |
+| Everything else | **None** | No INSERT/UPDATE/DELETE/TRUNCATE, no CREATE/ALTER, no trigger changes, no app functions, no `auth` schema |
 
-**C. Create your key pair** (Termux from F-Droid; the Play Store build is outdated)
+**Security limitations (read before approving)**
+- **It can read everything in the backup**, including the legacy patient names and the
+  PIN hashes. Anyone who obtains its password can read the whole database. It cannot
+  change anything.
+- **Its read-only setting can be switched off by the login itself.** Protection against
+  writes comes from the **missing write privileges**, which the login cannot grant
+  itself. Tested: every write attempt is refused even with the setting switched off.
+- `BYPASSRLS` means tenant isolation does **not** apply to this login. That is
+  necessary for a backup, but it makes it more sensitive than any app user.
+- **The password protects it; nothing else does.** Supabase accepts this login from any
+  network. Use a long random password, type it only when needed, and rotate it after
+  use if you like.
+- **Not yet verified in production:**
+  - that the Supabase `postgres` role may create a login with `BYPASSRLS` (it can
+    locally, and its attributes match production);
+  - that the Session pooler accepts this custom login.
+- **Removal:** the bottom of the SQL file removes all privileges and the role.
+
+**Setup, only after your approval:**
+1. Run the SQL file in the app project's SQL editor (Supabase dashboard).
+2. In the same editor, set the password yourself:
+   `alter role dlm_backup_reader password '<long random password>';`
+   Never put it in a file, the chat or the repository.
+
+## 5. Preparing the phone (no production data is touched)
+
+**5.1 Install Termux** from F-Droid (f-droid.org). The Play Store version is outdated.
+iPhone is not supported.
+
+**5.2 Packages and scripts**
 ```
 pkg update && pkg upgrade
-pkg install age
-age-keygen -o ~/dlm-backup-key.txt
-chmod 600 ~/dlm-backup-key.txt
+pkg install postgresql nodejs age git
+git clone -b claude/dental-lab-manager-v4d2kv https://github.com/diyaghhamza13-wq/tgc
+cd tgc/dental-lab-manager
 ```
-1. It prints `Public key: age1…`. That is the only line you send me.
-2. **Offline copy, immediately:**
-   - run `cat ~/dlm-backup-key.txt`;
-   - copy the `AGE-SECRET-KEY-1…` line onto paper, or into your password manager.
-   - Termux deletes its files if the app is uninstalled or its data is cleared.
-3. **Check it** (prints `ok`):
-   `echo ok | age -r $(age-keygen -y ~/dlm-backup-key.txt) | age -d -i ~/dlm-backup-key.txt`
-4. If `pkg install age` says the package is not found, tell me. I have not verified
-   Termux's package list today.
+If the repository is private, git asks for your GitHub login. If `pkg install` cannot
+find a package, stop and tell me. Termux's package list has not been verified.
 
-**D. Non-secret values for the chat:** your public key (`age1…`) and the backup
-project's **Reference ID** (Project Settings → General).
+**5.3 Create your key pair**
+```
+mkdir -p ~/dlm-backups && chmod 700 ~/dlm-backups
+age-keygen -o ~/dlm-backup-key.txt && chmod 600 ~/dlm-backup-key.txt
+```
+**Make an offline copy right away:** copy the `AGE-SECRET-KEY-1…` line from
+`cat ~/dlm-backup-key.txt` onto paper or into a password manager. Termux deletes its
+files if the app is uninstalled or its data is cleared.
 
-**E. Upload key, secure form only:**
-1. After your approval I open the form for `<reference-id>.supabase.co`.
-2. Paste the backup project's **anon / publishable** key there (Project Settings → API
-   Keys).
-3. Never send the service-role key or the database password.
+**5.4 Check the tools (no database involved)**
+```
+bash scripts/backup/termux-check.sh ~/dlm-backup-key.txt
+```
+It checks `psql`, `node` (18+), `age`, `age-keygen`, `git`, the key file's permissions,
+an encrypt/decrypt round trip with your key, and that the scripts are intact. It ends
+with `ALL CHECKS PASSED`.
 
-## 4. Export (each run only with your approval)
+**5.5 Test the connection (metadata only; exports nothing)**
+1. Find the connection details in the app project's dashboard → **Connect**.
+   - **Direct connection:** host `db.<project-ref>.supabase.co`, port 5432, user
+     `dlm_backup_reader`. Free projects give this host an **IPv6 address only.**
+   - **Session pooler** (for networks without IPv6): the pooler host shown there, port
+     5432, user `dlm_backup_reader.<project-ref>`.
+2. Run:
+   ```
+   read -rs PGPASSWORD; export PGPASSWORD      # type the password; nothing is shown or saved
+   export DB_URL='postgresql://<user>@<host>:5432/postgres?sslmode=require'
+   node scripts/backup/check-connection.mjs
+   ```
+3. It reads only metadata and one yes/no answer per check: login, server version, TLS,
+   read-only default, no write privilege on any table, all 29 tables readable,
+   row-level-security bypass, migration history and file list readable, no access to
+   login accounts. It must end with `READY`.
+4. If it reports anything else (for example "cannot write" fails because you used the
+   `postgres` login), do not export.
+
+## 6. Export, saved locally first (each production export only with your approval)
 
 ```
-SUPABASE_PROJECT_REF=slfwakmskshkbrfqqfwl AGE_RECIPIENT=age1…your-public-key… \
-OUT_DIR=<scratch directory outside the repository> \
-BACKUP_STORAGE_URL=https://<backup-ref>.supabase.co \
+read -rs PGPASSWORD; export PGPASSWORD
+DB_URL='postgresql://<user>@<host>:5432/postgres?sslmode=require' \
+AGE_RECIPIENT=$(age-keygen -y ~/dlm-backup-key.txt) OUT_DIR=~/dlm-backups \
 node scripts/backup/export.mjs
+unset PGPASSWORD
 ```
-1. One read-only `SELECT` returns everything as one consistent snapshot.
-2. The data is encrypted in memory to your public key.
-3. The script uploads `<UTC timestamp>-<random>.json.age` and writes a manifest with
-   counts and SHA-256 checksums only, no personal data.
-4. The local encrypted copy is deleted after a successful upload.
 
-## 5. Restore (only with your approval; on your phone)
+**What it does:**
+1. Refuses to run with a login that can write, with `auth` access, without TLS, or with
+   `OUT_DIR` inside the repository.
+2. Reads everything in **one read-only SELECT**, holding it only in memory.
+3. Encrypts it to your public key and saves `~/dlm-backups/<stamp>-<id>.json.age`, plus
+   a manifest with counts and SHA-256 checksums only (no personal data).
+4. Uploads nothing.
+
+**Verify it, without writing plaintext anywhere:**
+```
+age -d -i ~/dlm-backup-key.txt ~/dlm-backups/<file>.json.age | node scripts/backup/verify.mjs ~/dlm-backups/<file>.manifest.json
+```
+It ends with `OK: 29 tables, … rows`.
+
+**Keep a second copy** of the **encrypted** file:
+1. Run `termux-setup-storage` once.
+2. `cp ~/dlm-backups/<file>.json.age ~/storage/downloads/`
+3. Upload it to your Google Drive from the Drive app.
+
+Never copy `dlm-backup-key.txt` next to it.
+
+## 7. Optional: the separate backup project
+
+Use it only if you want a copy in a separate Supabase project in addition to the local
+and Drive copies.
+
+**Setup:**
+1. Create the project `dlm-backups` in Supabase: region West EU (London), Free plan,
+   generated database password stored in your password manager.
+2. In its SQL editor, run `docs/backup/backup-project-setup.sql`. This creates a private
+   bucket whose public key can only **add** backup files: it cannot list, read,
+   overwrite or delete them.
+
+**Upload** (from Termux):
+```
+read -rs BACKUP_APIKEY; export BACKUP_APIKEY        # the backup project's anon/publishable key
+BACKUP_STORAGE_URL=https://<backup-ref>.supabase.co node scripts/backup/upload.mjs ~/dlm-backups/<file>.json.age
+unset BACKUP_APIKEY
+```
+
+- It refuses anything that is not an `age`-encrypted backup file, and it never
+  overwrites.
+- **Limits:**
+  - the upload over Supabase's hosted gateway was tested locally only;
+  - free projects pause after inactivity.
+
+## 8. Restore and reverse (only with your approval; on your phone)
 
 **For a migration problem, do not restore data.** Run
 `supabase/rollback/rollback_20261114155851_production_only_cases.sql` and restore the
 previous Netlify deploy.
 
-**Data restore**, in Termux. The decrypted data never leaves your phone.
+**Restore.** Writing needs the app's main database password, because the read-only login
+cannot restore.
 ```
-pkg install age nodejs postgresql git
-git clone -b claude/dental-lab-manager-v4d2kv https://github.com/diyaghhamza13-wq/tgc && cd tgc/dental-lab-manager
-# (if the repository is private, Termux asks for your GitHub login)
-# download <file>.json.age from the backup project: Dashboard → Storage → dlm-backups → Download
 age -d -i ~/dlm-backup-key.txt <file>.json.age > ~/backup.json
-node scripts/backup/restore.mjs ~/backup.json [<file>.manifest.json] > ~/restore.sql
-# app project connection string: Dashboard → Connect → Session pooler (needs the app DB password)
-psql "<connection string>" -v ON_ERROR_STOP=1 -f ~/restore.sql
-rm ~/backup.json ~/restore.sql
+node scripts/backup/restore.mjs ~/backup.json <file>.manifest.json > ~/restore.sql
+read -rs PGPASSWORD; export PGPASSWORD               # main database password (postgres login)
+psql 'postgresql://postgres@<host>:5432/postgres?sslmode=require' -v ON_ERROR_STOP=1 -f ~/restore.sql
+rm ~/backup.json ~/restore.sql; unset PGPASSWORD
 ```
 
-**What `restore.sql` does, in one transaction**
-1. **Refuses to run** if the database's migration history differs from the backup's.
-2. Disables user triggers on all public tables, so the restore creates no audit, history
-   or notification rows.
-3. Empties all public tables and re-inserts every row in foreign-key order.
-4. Resets the identity sequences and re-enables the triggers.
+What `restore.sql` does, in one transaction:
+- refuses a different migration history;
+- disables user triggers (so no audit or history side effects);
+- empties and re-inserts all public tables in foreign-key order;
+- resets the sequences;
+- re-enables the triggers.
 
 **It is a FULL restore.** Rows created after the backup are removed.
 
-## 6. Reversing the legacy file-name redaction (only with your approval; on your phone)
-
-`scripts/reverse-legacy-file-names.mjs` undoes `scripts/redact-legacy-files.mjs`
-**exactly**. It restores:
-- the storage object names;
-- `attachments.storage_path` and `attachments.file_name`;
-- the file history rows;
-- the attachment audit rows.
-
-**Requirements:**
-- a backup taken **before** the redaction (runbook step 2 guarantees this);
-- **your private key**, so it runs on your phone;
-- the app project's **service-role key**, copied by you from the dashboard into
-  Termux; never into the chat.
-
+**Reverse the legacy file-name redaction.** This needs a backup taken **before** the
+redaction and the app project's service-role key, typed in Termux.
 ```
 age -d -i ~/dlm-backup-key.txt <pre-redaction file>.json.age > ~/backup.json
-SUPABASE_URL=https://slfwakmskshkbrfqqfwl.supabase.co SUPABASE_SERVICE_ROLE_KEY=<from dashboard> \
-BACKUP_JSON=~/backup.json node scripts/reverse-legacy-file-names.mjs            # dry run: counts only
-SUPABASE_URL=… SUPABASE_SERVICE_ROLE_KEY=… BACKUP_JSON=~/backup.json APPLY=1 node scripts/reverse-legacy-file-names.mjs
-rm ~/backup.json
+read -rs SUPABASE_SERVICE_ROLE_KEY; export SUPABASE_SERVICE_ROLE_KEY
+SUPABASE_URL=https://<app-ref>.supabase.co BACKUP_JSON=~/backup.json node scripts/reverse-legacy-file-names.mjs          # dry run
+SUPABASE_URL=https://<app-ref>.supabase.co BACKUP_JSON=~/backup.json APPLY=1 node scripts/reverse-legacy-file-names.mjs
+rm ~/backup.json; unset SUPABASE_SERVICE_ROLE_KEY
 ```
 
-**How it works:**
-1. It moves the objects back first.
-2. Then it restores the rows in one database call.
-3. If that call fails, it moves the objects forward again, so no download link breaks.
-4. It prints only IDs and counts.
-5. Audit rows written by the redaction and by the reversal are **kept** as a record.
-   After a reversal, those new audit rows contain the original names again, which is the
-   purpose of a reversal.
+## 9. Local test results (2026-11-14)
 
-## 7. Local test results (2026-11-14)
+**Phone-based flow** (`scripts/tests/backup-phone-flow-local-test.sh`, run against the
+local stack exactly as in Termux): **21/21 passed.**
+- **Tool check** passes (tools, key round trip, scripts).
+- **Read-only login**, created from `readonly-role-setup.sql` with the password set
+  separately:
+  - connection check READY;
+  - the check refuses the full `postgres` login;
+  - a wrong password fails cleanly.
+- **Export with the read-only login:**
+  - an encrypted file and a manifest are saved locally;
+  - no plaintext file is written;
+  - the manifest contains no row data.
+- **The export refuses:**
+  - the full `postgres` login;
+  - Management API mode without `ALLOW_CLOUD_EXPORT`;
+  - a remote URL without `sslmode`;
+  - an `OUT_DIR` inside the repository.
+- **Verify:**
+  - OK with the right key;
+  - fails with a wrong key;
+  - detects a manifest mismatch.
+- **Optional upload:**
+  - accepted;
+  - a second upload of the same file is refused;
+  - a non-encrypted file is refused;
+  - the upload key cannot download;
+  - uploaded bytes are identical.
+- **Cleanup:** the role is removed.
 
-**Backup drill.** Data: a demo lab + a legacy patient case + legacy files; 791 rows in 29
-tables.
-1. Export → encrypted (no readable lab or patient name in the file) → uploaded to the
-   insert-only bucket.
-2. Damaged the database:
-   - 2 cases deleted, the patient deleted;
-   - the lab renamed;
-   - a tooth number changed;
-   - an audit row added.
-3. Decrypted → manifest verified → restore SQL generated.
-4. The guard refused a mismatched migration history and changed nothing.
-5. **Restore → 29/29 tables checksum-identical** to the backup (including the audit
-   log); no plaintext left.
+**Write protection of the read-only login** (separate local test): update, delete,
+insert, create table and disable triggers were all refused **even after switching its
+read-only setting off**. Nothing changed. Reading login accounts was refused.
 
-**Missing login account.** After the backup, an employee's Auth account was deleted
-and the lab was renamed; then the restore was run. It stopped on the foreign key
-`employees_auth_user_id_fkey` and **changed nothing**: the lab name stayed as it was,
-and no trigger was left disabled.
+**Restore drill:** export → upload → damage the database → version guard refuses →
+restore → **29/29 tables checksum-identical**, 791 rows; no plaintext left.
+**Missing login account:** the restore stops on the foreign key and changes nothing.
 
-**Insert-only bucket.** Upload accepted. Overwrite, download, delete and other names
-refused; listing returns nothing.
-
-**Forward + reverse round trip:** `scripts/tests/legacy-files-local-test.mjs`, **30/30
-checks passed.**
-- **Setup:** 4 legacy files (photo, video, PDF, STL) and 2 deleted legacy files, all
-  with a fictional patient name; then an encrypted backup.
-- **Default forward:** only the STL is renamed. Photo, video and PDF: rows, storage
-  objects (names and contents), history and audit rows are byte-identical; no audit row
-  added.
-- **Forward with `INCLUDE_SENSITIVE=1`:**
-  - 0 occurrences of the name left;
-  - contents unchanged;
-  - signed URL anonymous;
-  - idempotent;
-  - functions not callable by app users.
-- **Reverse from the decrypted backup:**
-  - storage objects back under their original names with identical contents (SHA-256);
-  - attachment rows identical (all columns);
-  - file history identical;
-  - pre-existing audit rows identical;
-  - the photo downloads at its original path;
-  - idempotent;
-  - decrypted file removed.
-  - 12 new audit rows (from the redaction and the reversal) remain as a record.
+**Legacy-file round trip** (`scripts/tests/legacy-files-local-test.mjs`): **29/29
+passed.**
+- default renaming leaves photos, video and PDF byte-identical;
+- the opt-in renaming removes every original name;
+- the reverse from the encrypted backup restores storage objects, rows, history and
+  audit exactly.
 
 **Regression:**
 - integration suite 137/137;
 - type check clean;
-- rollback script restores functions and policies identical to production.
+- after the rollback, functions and policies are identical to production. (The local
+  test bucket's policy was removed first; it is not part of the app.)
 
-## 8. Retention (planned, manual)
+## 10. Retention (planned, manual)
 
-- Delete the pre-deployment backup from the backup project (Storage → dlm-backups →
-  Delete) once Phase 1 is verified, **and at the latest after 30 days.**
-- **Keep it at least as long as you may want to reverse the file-name redaction.** After
-  deletion, the redaction can no longer be reversed.
+- Keep the pre-deployment backup until Phase 1 is verified, and **at least as long as
+  you may want to reverse the file-name redaction.** Delete it at the latest after 30
+  days, from `~/dlm-backups`, your Drive and the optional backup project.
 - Keep your private key for as long as any backup exists.
 - Nothing deletes backups automatically. Until you do it, the privacy policy must not
   claim 30-day retention as operational.

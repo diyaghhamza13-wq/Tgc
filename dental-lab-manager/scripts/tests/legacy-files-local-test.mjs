@@ -98,7 +98,7 @@ const keyFile = path.join(WORK_DIR, 'test-key.txt');
 if (!fs.existsSync(keyFile)) execFileSync('age-keygen', ['-o', keyFile], { stdio: 'ignore' });
 const pub = execFileSync('age-keygen', ['-y', keyFile]).toString().trim();
 const outDir = path.join(WORK_DIR, `backup-${Date.now()}`);
-execFileSync('node', ['scripts/backup/export.mjs'], { env: { ...process.env, DB_URL, AGE_RECIPIENT: pub, OUT_DIR: outDir } });
+execFileSync('node', ['scripts/backup/export.mjs'], { env: { ...process.env, DB_URL, AGE_RECIPIENT: pub, OUT_DIR: outDir, ALLOW_PRIVILEGED_LOGIN: '1' } }); // local superuser-like login
 const enc = fs.readdirSync(outDir).find((f) => f.endsWith('.json.age'));
 check('backup file is encrypted (no readable name inside)', !fs.readFileSync(path.join(outDir, enc)).includes(NAME));
 

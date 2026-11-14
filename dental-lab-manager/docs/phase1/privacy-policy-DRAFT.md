@@ -130,11 +130,14 @@ temporary links. All connections are encrypted (HTTPS).
 - **What they contain:** the database only, meaning laboratories, employees, dentists,
   cases and their history, including earlier patient names. Uploaded files and login
   accounts are **not** part of these backups.
-- **Where:** in a separate Supabase project in the same region (London).
-- **Encryption:** each backup is encrypted in memory by the export program, before it
-  is stored anywhere. It can only be decrypted with a private key that belongs to the
-  operator and is kept on the operator's own device. **The key is never given to any developer, contractor,
+- **How:** backups are made on the operator's own device, using a read-only database
+  login. Each backup is encrypted in memory, before it is stored anywhere. It can only
+  be decrypted with a private key that belongs to the operator and is kept on the
+  operator's own device. **The key is never given to any developer, contractor,
   automated assistant or hosting provider.**
+- **Where:** the encrypted files are kept on the operator's device and, as encrypted
+  copies only, in storage the operator controls [[CHOOSE: the operator's Google Drive |
+  a separate Supabase project in London | both]].
 - **Retention:** backups are deleted after at most 30 days.
 ]]
 
@@ -225,7 +228,7 @@ If this policy changes, the new version is published on this page with its updat
 | Earlier file names replaced (option A or B) | Migration §8 + `scripts/redact-legacy-files.mjs` (default = B; `INCLUDE_SENSITIVE=1` = A). Reversible with `scripts/reverse-legacy-file-names.mjs` and a backup taken before. | Tested locally (forward + reverse); **runs only with your approval**; choose A or B |
 | Earlier patient names deleted on lab deletion | `patients.lab_id` foreign key `on delete cascade` | Active today |
 | Manual copy/deletion process | No app function. Done by the operator via the Supabase dashboard. A deletion must first clear `cases.patient_id` for that lab (foreign key), then delete `patients` rows. | **Organisational promise.** Publish only if you can honour the verification and the 30 days. |
-| Backups (database only, encrypted, key with the operator, ≤ 30 days) | `docs/backup/README.md` | **Planned, not active.** No backup project, key or backup exists yet. Keep the `[[IF ACTIVE]]` blocks out until all are true. |
+| Backups (database only, made and encrypted on the operator's phone with a read-only login, key with the operator, ≤ 30 days) | `docs/backup/README.md`, `docs/backup/readonly-role-setup.sql` | **Planned, not active.** No backup project, key or backup exists yet. Keep the `[[IF ACTIVE]]` blocks out until all are true. |
 | Private key never held by any developer or assistant | The export encrypts to the operator's *public* key. Decryption (restore, reverse) runs on the operator's phone. Claude never receives the private key. | Design rule |
 | No analytics/tracking | `package.json`: no analytics, crash-reporting or push SDK; `expo-updates` has no update URL | Active today |
 | Provider server logs (IP) | Supabase/Netlify platform logs; not used by the app | Active today (provider) |

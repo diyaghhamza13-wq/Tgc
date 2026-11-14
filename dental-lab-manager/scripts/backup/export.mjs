@@ -1,41 +1,52 @@
 #!/usr/bin/env node
 /**
  * Encrypted logical backup of the Dental Lab Manager database (read-only).
+ * RECOMMENDED USE: on the operator's own phone (Termux), connected directly to
+ * Postgres with the read-only backup login — see docs/backup/README.md.
+ *
+ *   read -rs PGPASSWORD; export PGPASSWORD           # typed, never stored
+ *   DB_URL='postgresql://dlm_backup_reader@<host>:5432/postgres?sslmode=require' \
+ *   AGE_RECIPIENT=age1… OUT_DIR=~/dlm-backups node scripts/backup/export.mjs
  *
  * What it does
- *  - Reads the list of public tables, their columns and foreign keys.
+ *  - Checks the login first: it must be read-only (no INSERT/UPDATE/DELETE/
+ *    TRUNCATE privilege on any public table, no auth schema access), unless
+ *    ALLOW_PRIVILEGED_LOGIN=1 (local tests only).
  *  - Reads ALL rows of all public tables + migration history + storage object
- *    metadata in ONE SELECT statement (one consistent snapshot).
+ *    metadata in ONE read-only SELECT (one consistent snapshot).
  *  - Keeps the data in memory only, computes a manifest (row count + SHA-256
  *    per table; no personal data) and encrypts the data with `age` to the
- *    PUBLIC key given in AGE_RECIPIENT. Only the holder of the matching private
- *    key can decrypt. No unencrypted copy is written to disk.
- *  - Optionally uploads the encrypted file to the separate backup project
- *    (insert-only bucket, see docs/backup/README.md).
+ *    PUBLIC key in AGE_RECIPIENT. No unencrypted copy is written to disk.
+ *  - Saves <stamp>-<random>.json.age and <…>.manifest.json in OUT_DIR. Nothing
+ *    is uploaded: use scripts/backup/upload.mjs afterwards (optional).
  *
- * Never prints row contents, keys or passphrases.
+ * Never prints row contents, keys or passwords.
  *
- * Source (one of):
- *   DB_URL=postgresql://…                          (psql)
- *   SUPABASE_PROJECT_REF=<ref>                     (Management API; token injected by the proxy)
- * Required:
- *   AGE_RECIPIENT=age1…                            (public key only)
- *   OUT_DIR=/path/outside/the/repository
- * Optional upload:
- *   BACKUP_STORAGE_URL=https://<backup-ref>.supabase.co   (apikey injected by the proxy, or BACKUP_APIKEY)
+ * Not recommended (plaintext passes through whoever runs it): the Management
+ * API source SUPABASE_PROJECT_REF=<ref>, accepted only with ALLOW_CLOUD_EXPORT=1.
  */
 import { execFileSync, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const { DB_URL, SUPABASE_PROJECT_REF: REF, AGE_RECIPIENT, OUT_DIR, BACKUP_STORAGE_URL, BACKUP_APIKEY } = process.env;
+const { DB_URL, SUPABASE_PROJECT_REF: REF, AGE_RECIPIENT, OUT_DIR, ALLOW_CLOUD_EXPORT, ALLOW_PRIVILEGED_LOGIN } = process.env;
 const die = (m) => { console.error(m); process.exit(2); };
-if (!DB_URL === !REF) die('set exactly one of DB_URL or SUPABASE_PROJECT_REF');
+if (!DB_URL === !REF) die('set exactly one of DB_URL (recommended) or SUPABASE_PROJECT_REF');
+if (REF && ALLOW_CLOUD_EXPORT !== '1') die('Management API export is disabled: run the export on your own device with DB_URL (see docs/backup/README.md)');
 if (!/^age1[0-9a-z]{58}$/.test(AGE_RECIPIENT ?? '')) die('AGE_RECIPIENT must be an age public key (age1…)');
 if (!OUT_DIR) die('OUT_DIR is required');
 const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../..');
 if (path.resolve(OUT_DIR).startsWith(repoRoot)) die('OUT_DIR must be outside the repository');
+
+if (DB_URL) {
+  let u;
+  try { u = new URL(DB_URL); } catch { die('DB_URL is not a valid postgresql:// URL'); }
+  const local = ['127.0.0.1', 'localhost', '::1', '[::1]'].includes(u.hostname);
+  const ssl = u.searchParams.get('sslmode');
+  if (!local && !['require', 'verify-ca', 'verify-full'].includes(ssl ?? '')) die('remote DB_URL must use ?sslmode=require (or verify-full)');
+  if (u.password) console.error('note: the password is in DB_URL; prefer PGPASSWORD typed with `read -rs` (not saved in shell history)');
+}
 
 /** Run one read-only SQL statement and return its single JSON value. */
 async function query(sql) {
@@ -52,6 +63,17 @@ async function query(sql) {
   if (!res.ok) die(`Management API query failed: ${res.status}`);
   const rows = await res.json();
   return Object.values(rows[0])[0];
+}
+
+// 0. the login must be read-only
+const who = await query(`select json_build_object(
+  'user', current_user,
+  'write_privileges', (select count(*) from pg_class c where c.relnamespace = 'public'::regnamespace and c.relkind in ('r', 'p')
+      and (has_table_privilege(c.oid, 'INSERT') or has_table_privilege(c.oid, 'UPDATE')
+        or has_table_privilege(c.oid, 'DELETE') or has_table_privilege(c.oid, 'TRUNCATE'))),
+  'auth_access', has_schema_privilege('auth', 'USAGE'))`);
+if ((who.write_privileges > 0 || who.auth_access) && ALLOW_PRIVILEGED_LOGIN !== '1') {
+  die(`login "${who.user}" is not the read-only backup login (write privileges on ${who.write_privileges} tables, auth access: ${who.auth_access}). Use dlm_backup_reader.`);
 }
 
 // 1. structure
@@ -94,19 +116,12 @@ const enc = spawnSync('age', ['-r', AGE_RECIPIENT], { input: plaintext, maxBuffe
 plaintext.fill(0);
 if (enc.status !== 0) die('age encryption failed');
 fs.mkdirSync(OUT_DIR, { recursive: true, mode: 0o700 });
-const encPath = path.join(OUT_DIR, name);
-fs.writeFileSync(encPath, enc.stdout, { mode: 0o600 });
+fs.writeFileSync(path.join(OUT_DIR, name), enc.stdout, { mode: 0o600 });
 manifest.file = name;
 manifest.encrypted_sha256 = crypto.createHash('sha256').update(enc.stdout).digest('hex');
 manifest.encrypted_bytes = enc.stdout.length;
 fs.writeFileSync(path.join(OUT_DIR, name.replace(/\.json\.age$/, '.manifest.json')), JSON.stringify(manifest, null, 2), { mode: 0o600 });
 const total = Object.values(manifest.tables).reduce((s, t) => s + t.rows, 0);
-console.log(`encrypted backup written: ${name} (${enc.stdout.length} bytes, ${tables.length} tables, ${total} rows)`);
-
-// 4. optional upload (insert-only bucket in the separate backup project)
-if (BACKUP_STORAGE_URL) {
-  const headers = { 'Content-Type': 'application/octet-stream', apikey: BACKUP_APIKEY || 'proxy-injected' };
-  const res = await fetch(`${BACKUP_STORAGE_URL}/storage/v1/object/dlm-backups/${name}`, { method: 'POST', headers, body: enc.stdout });
-  if (!res.ok) die(`upload failed: ${res.status}`);
-  console.log(`uploaded to backup project as ${name}`);
-}
+console.log(`saved locally: ${path.join(OUT_DIR, name)}`);
+console.log(`  ${enc.stdout.length} bytes, ${tables.length} tables, ${total} rows, sha256 ${manifest.encrypted_sha256}`);
+console.log('next: verify it (scripts/backup/verify.mjs); upload is optional (scripts/backup/upload.mjs)');
