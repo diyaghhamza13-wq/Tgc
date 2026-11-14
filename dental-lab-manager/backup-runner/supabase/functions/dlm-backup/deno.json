@@ -1,0 +1,6 @@
+{
+  "imports": {
+    "age-encryption": "npm:age-encryption@0.3.1",
+    "aws4fetch": "npm:aws4fetch@1.0.20"
+  }
+}

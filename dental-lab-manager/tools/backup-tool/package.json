@@ -1,0 +1,10 @@
+{
+  "name": "dlm-backup-tool",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Builds docs/backup/tools/backup-tool.html: offline key generation, backup verification, restore-SQL and file decryption in the browser.",
+  "type": "module",
+  "scripts": { "build": "node build.mjs" },
+  "dependencies": { "age-encryption": "0.3.1" },
+  "devDependencies": { "esbuild": "0.28.2" }
+}

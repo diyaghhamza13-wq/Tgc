@@ -14,3 +14,11 @@ Open `index.html` in a modern browser. For best results, serve this folder with 
 
 ## Important
 This is a front-end prototype. Authentication, permanent data storage, real order submission, real messaging, payment processing, invoice generation, and secure file storage are not connected. These require a backend, database, authentication provider, and payment gateway. Demo values and example orders are placeholders.
+
+---
+
+## Dental Lab Manager (new application)
+
+The complete dental laboratory management system (Expo + Supabase) lives in
+[`dental-lab-manager/`](dental-lab-manager/README.md). See its README for setup,
+deployment and architecture. The WeCAD prototype above is unchanged.
