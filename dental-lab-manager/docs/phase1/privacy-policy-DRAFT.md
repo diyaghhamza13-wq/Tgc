@@ -140,7 +140,7 @@ If this policy changes, the new version is published on this page with its updat
 
 | Statement in the draft | Basis in code / production (checked 2026-11-14) |
 |---|---|
-| No patient name, birth year, gender or notes collected | Migration `20261115000100`: `create_case` rejects `patient`/`patient_id`; wizard has no such field |
+| No patient name, birth year, gender or notes collected | Migration `20261114155851`: `create_case` rejects `patient`/`patient_id`; wizard has no such field |
 | Earlier patient names hidden from lab users | `patients`: all privileges revoked from `anon` and `authenticated`, policies dropped |
 | Only 3D production files accepted | Rules enforced in three places: the app (`files.ts`), the attachments trigger, and the storage insert policy |
 | Earlier files still downloadable | Attachments select policy unchanged; legacy rows and objects untouched |

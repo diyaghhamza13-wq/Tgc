@@ -96,7 +96,8 @@ original file names, which may contain names.
 - Its changes are schema, permissions and function definitions, which the rollback script
   reverses.
 - **But there is no independent safety net.** I recommend creating one **before**
-  deployment. Options (each needs your approval):
+  deployment. Options (each needs your approval). **Chosen: B2, together with the B3
+  fingerprints.** The export itself is not done yet; see 5.4 for the plan.
   - **B1 — Upgrade the Supabase project to a paid plan** (daily backups, optional
     point-in-time recovery), then wait for the first backup.
   - **B2 — Read-only logical export through the Management API** of all `public` tables
@@ -111,7 +112,7 @@ original file names, which may contain names.
 
 ### 5.3 Rollback plan
 
-**Script:** `supabase/rollback/rollback_20261115000100_production_only_cases.sql`. It sits
+**Script:** `supabase/rollback/rollback_20261114155851_production_only_cases.sql`. It sits
 outside `migrations/`, so it is never applied automatically. It runs in one transaction.
 
 **What it restores:**
@@ -148,8 +149,83 @@ Results:
 
 **Android:** no build has been published, so no Android rollback is needed.
 
-### 5.4 Proposed deployment runbook (for later — each step needs your go-ahead)
-1. Backup: B1 or B2, plus B3 "before" fingerprints.
+### 5.4 B2 — encrypted logical export (plan; not executed)
+
+**Scope (what goes in the export)**
+- **Every row of every table in schema `public`** (28 tables, ≈ 16 MB database):
+  laboratories, employees, `employee_credentials` (bcrypt PIN hashes only), doctors,
+  **patients (15 names)**, cases, teeth, implants, restorations, workflow, history,
+  attachments metadata, notifications, QC, deliveries, audit logs, catalogs.
+- `supabase_migrations.schema_migrations` (the 7 version rows).
+- **Storage metadata** for buckets `case-files` and `lab-assets`: object names, sizes,
+  timestamps. Not the file contents.
+- A **manifest**: per-table row counts and SHA-256 checksums. It contains no personal
+  data and doubles as the B3 "before" fingerprint.
+
+**Not included, and why**
+- **File contents** (4 files, ≈ 34 MB): the migration never touches storage. They can be
+  added as an option (B2+), encrypted the same way.
+- **`auth` schema** (login accounts): managed by Supabase Auth and untouched by the
+  migration. Restoring it through SQL is not a supported operation. If ever needed,
+  administrators re-link accounts by resetting PINs.
+- **Database schema:** not needed. Production is byte-identical to migrations 1–7 in the
+  repository (verified); the export records which versions were applied.
+
+**How it is produced (read-only)**
+- **One single `SELECT` statement** through the Management API returns all tables as one
+  JSON document. A single statement reads one consistent snapshot, so the tables cannot
+  drift apart during the export. Nothing is written to production.
+- The JSON is held **in memory only.** A Python process computes the manifest, then pipes
+  the JSON straight into the encryption tool. **No unencrypted copy is ever written to
+  disk.**
+
+**Encryption**
+- **GnuPG symmetric encryption:** AES-256, OpenPGP with integrity protection (MDC),
+  key derived from the passphrase with the strongest iterated S2K setting
+  (`--s2k-mode 3 --s2k-count 65011712 --s2k-digest-algo SHA512`).
+- **Passphrase:** randomly generated (≈ 160 bits), never printed in logs and never
+  committed. It is written to a private scratch file and shown to you **once**, only when
+  you ask, the same way as the DEMO2026 PIN.
+
+**Destination**
+- **This container is temporary, and the GitHub repository may be publicly visible.**
+  The backup must **never** go into the repository, even encrypted.
+- I send you the **encrypted file** (`dlm-backup-<timestamp>.json.gpg`) as a file
+  attachment in this conversation. You save it to a private place you control, for
+  example your Google Drive.
+- Keep the **passphrase separately**: a password manager or on paper, **not** in the
+  same folder or message as the file.
+- After you confirm both are saved, I delete the encrypted file and the passphrase file
+  from this container.
+- The manifest (no personal data) can stay in the repository's docs for the
+  before/after comparison.
+
+**Restore procedure (each step only with your approval)**
+1. **Normal case (migration problem):** no data restore. Run the rollback script
+   (section 5.3) and restore the previous Netlify deploy.
+2. **Data case (rows lost or damaged), done in a new working session:**
+   1. Upload the encrypted file and run
+      `gpg --decrypt dlm-backup-….json.gpg > backup.json` with the passphrase.
+   2. Check every table against the manifest (row counts and SHA-256).
+   3. Compare the backup with production read-only, and decide **which tables** to
+      restore. Never restore everything blindly: data created after the export would be
+      lost.
+   4. Restore in **one transaction:** for each chosen table, triggers off (no audit or
+      notification side effects), then
+      `delete from public.<t>` and
+      `insert … select * from jsonb_populate_recordset(null::public.<t>, <backup rows>)`,
+      in parent → child order, triggers back on.
+   5. Recompute the fingerprints and compare them with the manifest. Then delete the
+      decrypted `backup.json`.
+3. **Caveat to settle before relying on it:** turning triggers off on Supabase depends on
+   the privileges of the `postgres` role. I will **rehearse the whole restore on the local
+   stack** first: export the local database with the same script, damage it, restore it,
+   compare fingerprints. If triggers cannot be disabled there, the fallback is to restore
+   in foreign-key order with triggers active, then delete the audit rows that the restore
+   itself created.
+
+### 5.5 Proposed deployment runbook (for later — each step needs your go-ahead)
+1. Backup: B2 encrypted export (section 5.4), plus B3 "before" fingerprints.
 2. Apply the migration in one transaction and record it in the migration history.
 3. Immediately deploy the Phase 1 web build to Netlify. Expect a short window of 1–2
    minutes where the old web page cannot load case lists.
@@ -162,19 +238,23 @@ Results:
 
 ---
 
-## 6. Migration timestamp `20261115000100`
+## 6. Migration timestamp — renamed to `20261114155851`
 
-- Production history (read-only): 7 migrations, the latest is
-  **`20261114000100_employee_deletion_privacy`**. The repository has the same 7, plus the
-  new one.
-- `20261115000100` sorts after the latest one, so the order is technically valid and
-  `supabase db push` would apply it.
-- **It is not appropriate as is: it is dated tomorrow** (today is 2026-11-14 UTC).
-  - It would record a future date in the migration history.
-  - Any migration created later with a real timestamp before 2026-11-15 would sort before
-    it, although applied after it. The Supabase CLI then refuses to push without
-    `--include-all`.
-- **Recommendation:** before applying, rename it to the actual creation or deployment
-  time on 2026-11-14, for example `20261114160000_production_only_cases.sql`. Update the
-  rollback script's filename and the `version` it deletes to match. This is a
-  repository-only change; I have not made it yet.
+- **Before:** `20261115000100_production_only_cases.sql` was dated tomorrow (today is
+  2026-11-14 UTC). That would record a future date in the migration history. Any
+  migration created later with a real timestamp before 2026-11-15 would sort before it
+  although applied after it, and the Supabase CLI then refuses to push without
+  `--include-all`.
+- **Conflict check** (read-only, 2026-11-14 15:58 UTC):
+  - Production `supabase_migrations.schema_migrations` holds 7 versions, the latest
+    being `20261114000100`.
+  - The repository and both remote branches (`origin/main`: no migrations;
+    `origin/claude/dental-lab-manager-v4d2kv`: the same 7 plus this one) have **no other
+    migration** at or after `20261114155851`.
+- **Now:** `supabase/migrations/20261114155851_production_only_cases.sql`. It is the
+  creation time (UTC), it sorts after `20261114000100`, and it is not in the future. The
+  file contents are unchanged.
+- **Rollback script renamed to match:**
+  `supabase/rollback/rollback_20261114155851_production_only_cases.sql`. It deletes
+  version `20261114155851` from the history.
+- Earlier commit messages still mention the old number; that is history only.

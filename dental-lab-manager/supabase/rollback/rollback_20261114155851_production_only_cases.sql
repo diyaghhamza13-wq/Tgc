@@ -1,8 +1,8 @@
 -- =============================================================================
--- ROLLBACK for migration 20261115000100_production_only_cases.
+-- ROLLBACK for migration 20261114155851_production_only_cases.
 -- NOT A MIGRATION. Kept outside supabase/migrations so it is never applied by
 -- accident. Run only with explicit approval, in one transaction:
---   psql "$DB_URL" -v ON_ERROR_STOP=1 -1 -f supabase/rollback/rollback_20261115000100_production_only_cases.sql
+--   psql "$DB_URL" -v ON_ERROR_STOP=1 -1 -f supabase/rollback/rollback_20261114155851_production_only_cases.sql
 --
 -- Restores the previous behaviour (patient name required, all upload types,
 -- patients readable by lab members). It deletes NO data:
@@ -307,5 +307,5 @@ begin
 end;
 $$;
 
--- migration history: mark 20261115000100 as not applied
-delete from supabase_migrations.schema_migrations where version = '20261115000100';
+-- migration history: mark 20261114155851 as not applied
+delete from supabase_migrations.schema_migrations where version = '20261114155851';
