@@ -76,6 +76,7 @@ export const ar: Record<TKey, string> = {
   'wiz.s3': 'تفاصيل التعويض', 'wiz.s4': 'المادة والمرفقات', 'wiz.orderRefHint': 'رقم الطلب أو العلبة لدى العيادة. لا تكتب أبدًا اسم المريض.',
   'wiz.noPatientData': 'تعليمات التصنيع فقط. لا تدخل أسماء المرضى أو أي معلومات طبية.',
   'files.allowed': 'المقبول: ملفات الإنتاج ثلاثية الأبعاد (STL، PLY، OBJ، 3MF، DCM من 3Shape). صور المرضى وملفات CBCT/DICOM والوصفات الممسوحة غير مقبولة.',
+  'files.legacyHint': 'ملف قديم (ليس ملف إنتاج). يظهر للمسؤولين فقط. راجعه واحذفه إن لم يكن ضروريًا.',
   'files.rejected': '{n} ملف غير مقبول: فقط ملفات الإنتاج ثلاثية الأبعاد مسموح بها.',
   'wiz.newDoctor': 'طبيب جديد', 'wiz.maxilla': 'الفك العلوي (Maxilla)', 'wiz.mandible': 'الفك السفلي (Mandible)',
   'wiz.mode': 'وضع النقر', 'wiz.modeSelect': 'تحديد', 'wiz.modeBridge': 'جسر', 'wiz.modeMissing': 'مفقود', 'wiz.modeImplant': 'زرعة',

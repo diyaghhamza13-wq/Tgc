@@ -74,6 +74,7 @@ export const en = {
   'wiz.s3': 'Restoration', 'wiz.s4': 'Material & files', 'wiz.orderRefHint': "The clinic's order or box number. Never a patient's name.",
   'wiz.noPatientData': 'Production instructions only. Do not enter patient names or medical information.',
   'files.allowed': 'Accepted: 3D production files (STL, PLY, OBJ, 3MF, 3Shape DCM). Patient photos, CBCT/DICOM and scanned prescriptions are not accepted.',
+  'files.legacyHint': 'Legacy file (not a production file). Visible to administrators only. Review it and delete it if it is not needed.',
   'files.rejected': '{n} file(s) not accepted: only 3D production files are allowed.',
   'wiz.newDoctor': 'New doctor', 'wiz.maxilla': 'Upper jaw (Maxilla)', 'wiz.mandible': 'Lower jaw (Mandible)',
   'wiz.mode': 'Tap mode', 'wiz.modeSelect': 'Select', 'wiz.modeBridge': 'Bridge', 'wiz.modeMissing': 'Missing', 'wiz.modeImplant': 'Implant',

@@ -76,6 +76,11 @@ export function displayFileName(a: { file_name: string; category: string }): str
   return ext ? `${a.category}.${ext}` : a.category;
 }
 
+/** Legacy file that is not a production 3D file (photo, video, CBCT, prescription…). Same rule as the database. */
+export function isLegacySensitive(a: { file_name: string; category: string }): boolean {
+  return ['photo', 'cbct', 'prescription'].includes(a.category) || !isAllowedFileName(a.file_name);
+}
+
 /** Opens the file picker. Files that are not production 3D files are returned in `rejected`. */
 export async function pickFiles(): Promise<{ files: PickedFile[]; rejected: string[] }> {
   const res = await DocumentPicker.getDocumentAsync({ multiple: true, copyToCacheDirectory: true, type: '*/*' });

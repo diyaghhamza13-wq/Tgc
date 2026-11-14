@@ -76,6 +76,7 @@ export const fr: Record<TKey, string> = {
   'wiz.s3': 'Restauration', 'wiz.s4': 'Matériau & fichiers', 'wiz.orderRefHint': "Numéro de commande ou de boîte du cabinet. Jamais le nom d'un patient.",
   'wiz.noPatientData': 'Instructions de fabrication uniquement. Ne saisissez ni nom de patient ni information médicale.',
   'files.allowed': 'Acceptés : fichiers 3D de production (STL, PLY, OBJ, 3MF, DCM 3Shape). Photos de patients, CBCT/DICOM et prescriptions scannées refusés.',
+  'files.legacyHint': "Ancien fichier (hors fichiers de production). Visible uniquement par les administrateurs. Vérifiez-le et supprimez-le s'il n'est pas nécessaire.",
   'files.rejected': '{n} fichier(s) refusé(s) : seuls les fichiers 3D de production sont acceptés.',
   'wiz.newDoctor': 'Nouveau médecin', 'wiz.maxilla': 'Arcade supérieure (Maxillaire)', 'wiz.mandible': 'Arcade inférieure (Mandibule)',
   'wiz.mode': 'Mode', 'wiz.modeSelect': 'Sélection', 'wiz.modeBridge': 'Bridge', 'wiz.modeMissing': 'Absente', 'wiz.modeImplant': 'Implant',

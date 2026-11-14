@@ -393,3 +393,118 @@ begin
   end if;
 end;
 $$;
+
+-- 7. Legacy files that are not production 3D files (photos, videos, CBCT/DICOM,
+--    scanned prescriptions, …) are visible and downloadable only by employees
+--    who may delete them (administrators by default), so that the laboratory
+--    can review and decide. Production 3D files keep the previous rule.
+create or replace function public.is_legacy_sensitive_file(p_category text, p_file_name text)
+returns boolean language sql immutable set search_path = '' as $$
+  select p_category in ('photo', 'cbct', 'prescription')
+      or coalesce(lower(substring(p_file_name from '\.([A-Za-z0-9]+)$')), '')
+         <> all (array['stl', 'ply', 'obj', '3mf', 'dcm']);
+$$;
+grant execute on function public.is_legacy_sensitive_file(text, text) to authenticated;
+
+drop policy if exists attachments_select on public.attachments;
+create policy attachments_select on public.attachments for select to authenticated
+  using (
+    lab_id = public.current_lab_id()
+    and public.can_view_case(case_id)
+    and (not public.is_legacy_sensitive_file(category, file_name)
+         or public.has_permission('attachments.delete_any'))
+  );
+
+create or replace function public.can_read_case_object(p_name text)
+returns boolean language sql stable security definer set search_path = '' as $$
+  select coalesce(
+    (select not public.is_legacy_sensitive_file(a.category, a.file_name)
+            or public.has_permission('attachments.delete_any')
+       from public.attachments a where a.storage_path = p_name),
+    true);
+$$;
+revoke execute on function public.can_read_case_object(text) from public, anon;
+grant execute on function public.can_read_case_object(text) to authenticated;
+
+drop policy if exists case_files_read on storage.objects;
+create policy case_files_read on storage.objects for select to authenticated
+  using (
+    bucket_id = 'case-files'
+    and (string_to_array(name, '/'))[1] = public.current_lab_id()::text
+    and public.can_view_case(public.storage_case_id(name))
+    and public.can_read_case_object(name)
+  );
+
+-- 8. Redaction of original legacy file names (maintenance; service role only).
+--    Run by scripts/redact-legacy-files.mjs AFTER this migration:
+--      a) the script moves each legacy storage object to <lab>/<case>/<uuid>.<ext>
+--         with the Storage API, then calls redact_legacy_attachment(id, new_path);
+--      b) it finally calls redact_legacy_file_names() for history and audit rows.
+--    The file contents are not changed and nothing is deleted. Original names
+--    are replaced by technical labels (irreversible, except from a backup).
+create or replace function public._redacted_path(p_path text)
+returns text language sql immutable set search_path = '' as $$
+  -- <lab>/<case>/<anything>.<ext> -> <lab>/<case>/redacted.<ext>
+  select case
+    when p_path is null then null
+    when p_path ~ '^[0-9a-f-]{36}/[0-9a-f-]{36}/[0-9a-f-]{36}\.[a-z0-9]{1,8}$' then p_path
+    else substring(p_path from '^([^/]*/[^/]*/)') || 'redacted'
+         || coalesce('.' || lower(substring(p_path from '\.([A-Za-z0-9]{1,8})$')), '')
+  end;
+$$;
+
+create or replace function public.redact_legacy_file_names()
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare
+  v_att integer; v_hist integer; v_audit integer;
+begin
+  -- attachment rows: technical label instead of the original name
+  update public.attachments
+     set file_name = public._safe_file_label(file_name, category)
+   where file_name is distinct from public._safe_file_label(file_name, category);
+  get diagnostics v_att = row_count;
+  -- the UPDATE above is audited with the old name: scrub audit rows afterwards
+  update public.case_history
+     set data = data || jsonb_build_object('file_name',
+           public._safe_file_label(data->>'file_name', coalesce(data->>'category', 'other')))
+   where event_type in ('file_uploaded', 'file_deleted')
+     and data ? 'file_name'
+     and data->>'file_name' is distinct from
+         public._safe_file_label(data->>'file_name', coalesce(data->>'category', 'other'));
+  get diagnostics v_hist = row_count;
+  update public.audit_logs l
+     set old_data = case when l.old_data is null then null else l.old_data
+           || jsonb_build_object('file_name', public._safe_file_label(l.old_data->>'file_name', coalesce(l.old_data->>'category', 'other')),
+                                 'storage_path', coalesce((select a.storage_path from public.attachments a where a.id::text = l.record_id),
+                                                          public._redacted_path(l.old_data->>'storage_path'))) end,
+         new_data = case when l.new_data is null then null else l.new_data
+           || jsonb_build_object('file_name', public._safe_file_label(l.new_data->>'file_name', coalesce(l.new_data->>'category', 'other')),
+                                 'storage_path', coalesce((select a.storage_path from public.attachments a where a.id::text = l.record_id),
+                                                          public._redacted_path(l.new_data->>'storage_path'))) end
+   where l.table_name = 'attachments';
+  get diagnostics v_audit = row_count;
+  return jsonb_build_object('attachments', v_att, 'history', v_hist, 'audit_rows', v_audit);
+end;
+$$;
+revoke execute on function public.redact_legacy_file_names() from public, anon, authenticated;
+grant execute on function public.redact_legacy_file_names() to service_role;
+
+-- Called after the Storage API moved the object from its old to its new name.
+create or replace function public.redact_legacy_attachment(p_attachment_id uuid, p_new_path text)
+returns void language plpgsql security definer set search_path = '' as $$
+declare
+  a public.attachments;
+begin
+  select * into a from public.attachments where id = p_attachment_id for update;
+  if a.id is null then
+    raise exception 'attachment_not_found' using errcode = 'P0002';
+  end if;
+  if p_new_path !~ ('^' || a.lab_id || '/' || a.case_id || '/[0-9a-f-]{36}\.[a-z0-9]{1,8}$') then
+    raise exception 'invalid_new_path' using errcode = 'P0001';
+  end if;
+  update public.attachments set storage_path = p_new_path where id = a.id;
+  perform public.redact_legacy_file_names();
+end;
+$$;
+revoke execute on function public.redact_legacy_attachment(uuid, text) from public, anon, authenticated;
+grant execute on function public.redact_legacy_attachment(uuid, text) to service_role;

@@ -12,7 +12,7 @@ import { Select } from '../../../components/pickers';
 import { type ChartValue, ToothChart } from '../../../components/ToothChart';
 import { Badge, Button, Card, Chip, Divider, EmptyState, ErrorBanner, Field, KV, Loading, Row, Screen, SectionTitle, Toggle } from '../../../components/ui';
 import { useAuth } from '../../../lib/auth';
-import { deleteCaseFile, displayFileName, openCaseFile, pickFiles, type UploadCategory, uploadCaseFile } from '../../../lib/files';
+import { deleteCaseFile, displayFileName, isLegacySensitive, openCaseFile, pickFiles, type UploadCategory, uploadCaseFile } from '../../../lib/files';
 import { fmtDate, fmtDuration, fmtSize, isDelayed, secondsSince } from '../../../lib/format';
 import { useI18n } from '../../../lib/i18n';
 import { fetchCaseDetail, fetchDepartments, fetchEmployees } from '../../../lib/queries';
@@ -345,6 +345,7 @@ export default function CaseDetails() {
               <Text style={styles.small}>
                 {tx('cat', a.category)} · {fmtSize(a.size_bytes)} · {a.uploaded_by ? empName[a.uploaded_by] : '—'} · {fmtDate(a.created_at, locale, true)}
               </Text>
+              {isLegacySensitive(a) ? <Text style={[styles.small, { color: colors.warning }]}>{t('files.legacyHint')}</Text> : null}
             </View>
             <Pressable
               hitSlop={8}

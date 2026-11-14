@@ -1,115 +1,110 @@
-# Google Play Data Safety — DRAFT answers for Phase 1
+# Google Play Data Safety — DRAFT v2 answers for Phase 1
 
 > **Status: draft for review. Nothing has been submitted.**
 >
-> **Limitations:**
-> - I could not open Google's live Play Console help pages from this environment, so
->   the category names below follow the Data Safety form as I know it. Check them
->   against the form you see in Play Console.
-> - Where the classification is uncertain I chose the **more conservative answer** (declare
->   rather than omit).
-> - Production facts below come from read-only queries on 2026-11-14.
+> **Verification limits — please read:**
+> - Every answer below was **checked against the actual code**; the evidence column
+>   gives the file.
+> - I could **not** check the answers against Google's *current* definitions.
+>   Network access to Google's help pages (support.google.com, play.google.com) was
+>   refused earlier in this session. The definitions quoted are from my training
+>   knowledge and **may be outdated.** Each row marked **"verify"** needs you to compare
+>   it with the text shown in Play Console.
+> - Where unsure, I chose the conservative answer (declare rather than omit).
+> - Production facts come from read-only aggregate queries on 2026-11-14.
+>
+> **Scope:** the Data Safety form describes the **Android app**. The web version
+> (Netlify) is not part of it. The Android app talks only to the Supabase project. It
+> loads no remote images or fonts: the About page images are bundled. External links
+> (website, WhatsApp, LinkedIn) only open the browser.
 
-## Production facts this draft is based on
-
-Read-only aggregate counts. No row contents were read.
+## Production facts
 
 | Item | Production |
 |---|---|
 | Laboratories | 12 |
-| Legacy patient records (`patients`) | 15, in 10 laboratories; 0 with birth year, gender, notes or reference (name only) |
+| Legacy patient records | 15 in 10 laboratories, name only |
 | Cases | 15 (all linked to a legacy patient); 2 have free-text notes |
-| Tooth records / implant records | 50 / 7 |
-| Attachments | 4: 2 photos (JPG/JPEG), 1 video (MP4, category "other"), 1 STL scan, ≈ 34 MB total |
-| Storage objects keeping the original file name in their path | 4 of 4 |
-| Lab assets (logos, avatars) | 0 |
+| Legacy attachments | 4: 1 MP4 (lab LAAB001), 1 JPEG (LAB002), 1 JPG (LAB004), 1 STL (LAB001) |
+| Lab assets (logos, profile photos) | 0 uploaded so far |
 
-## Section 1 — Overview questions
+## Section 1 — Overview
 
-| Question | Draft answer | Why |
-|---|---|---|
-| Does your app collect or share any of the required user data types? | **Yes** | Names, contact details, IDs, files, case data |
-| Is all of the user data collected by your app encrypted in transit? | **Yes** | HTTPS only (Supabase, Netlify) |
-| Do you provide a way for users to request that their data is deleted? | **Yes** | In-app: Profile → Delete my account; Lab profile → Delete this laboratory; email contact in the policy |
-| Data shared with third parties? | **No** | Supabase and Netlify act as service providers that process data on the developer's behalf. Under Google's definitions that is not "sharing". No other recipients. |
+| Question | Answer | Evidence in code | Google definition (from memory — verify) |
+|---|---|---|---|
+| Collects or shares required user data types? | **Yes** | See section 2 | — |
+| All user data encrypted in transit? | **Yes** | `eas.json`: `EXPO_PUBLIC_SUPABASE_URL=https://…`; `supabase-js` uses HTTPS. No cleartext endpoints. | Data sent over TLS/HTTPS |
+| Users can request data deletion? | **Yes** | `profile.tsx` (Delete my account → `manage-employee` `delete_my_account`); lab profile (Delete this laboratory → `delete_lab`); privacy policy §7–8 | Google also asks for a **web link** where deletion can be requested. Use `https://dental-lab-manager.netlify.app/privacy`, which must contain the approved policy §7–8. **Verify** this satisfies the current account-deletion requirement. |
+| Data shared with third parties? | **No** | Only Supabase (hosting, backups) and Netlify (web) receive data, as service providers | Transfers to service providers that process data on your behalf are **not** "sharing". **Verify.** |
 
 ## Section 2 — Data types
 
-Columns: **Collected?** / **Required or optional** / **Purposes** / *notes*.
-"Collected" = sent off the device to the service. No data type is processed only on the
-device ("ephemeral").
-
 ### Personal info
-| Type | Collected? | Required/optional | Purposes | Notes |
-|---|---|---|---|---|
-| Name | **Yes** | Required | App functionality, Account management | Employee full names (required); dentist names. **Legacy patient names are still stored.** The new version does not collect them. |
-| Email address | **Yes** | Optional | App functionality, Account management | Optional employee and dentist email |
-| User IDs | **Yes** | Required | App functionality, Account management, Fraud prevention/security/compliance | Lab code, employee code, internal account IDs |
-| Address | **Yes** | Optional | App functionality | Laboratory and clinic address (business addresses) |
-| Phone number | **Yes** | Optional | App functionality | Optional employee and dentist phone |
-| Race/ethnicity, political/religious beliefs, sexual orientation | No | — | — | — |
-| Other info | **Yes** | Required | App functionality | Role, department, specialty |
+| Type | Answer | Req./opt. | Purposes | Evidence | Notes |
+|---|---|---|---|---|---|
+| Name | **Collected** | Required | App functionality, Account management | Employee name required (`admin/employee/[id].tsx`, `register.tsx`); dentist name required (`admin/catalog.tsx`) | Legacy patient names stored, not collected by this version |
+| Email address | **Collected** | Optional | App functionality, Account management | Employee email (`admin/employee/[id].tsx:82`), lab email (`admin/lab.tsx:77`), dentist email (`catalog.tsx`) | |
+| User IDs | **Collected** | Required | App functionality, Account management, Fraud prevention/security/compliance | Lab code, employee code, Supabase account IDs (`employee-login`) | |
+| Address | **Collected** | Optional | App functionality | Lab address/city (`admin/lab.tsx:78–79`), dentist address/city (`catalog.tsx`) | Business addresses. **Verify** whether Google expects business addresses here; declaring is the safe choice. |
+| Phone number | **Collected** | Optional | App functionality | Employee (`admin/employee/[id].tsx:81`), lab (`admin/lab.tsx:76`), dentist (`catalog.tsx`) | |
+| Other info | **Collected** | Required | App functionality | Role, department, specialty (`admin/employee/[id].tsx`) | |
+| Race/ethnicity, political or religious beliefs, sexual orientation | Not collected | — | — | No such fields | |
 
 ### Health and fitness
-| Type | Collected? | Required/optional | Purposes | Notes |
-|---|---|---|---|---|
-| Health info | **Yes (conservative)** | Required for a case | App functionality | Tooth positions, missing teeth, implant specifications and 3D intraoral scans relate to an identifiable patient, through the ordering dentist. Legacy cases are also still linked to patient names. Declaring "No" would be hard to defend. |
-| Fitness info | No | — | — | — |
+| Type | Answer | Req./opt. | Purposes | Evidence | Notes |
+|---|---|---|---|---|---|
+| Health info | **Collected (conservative — verify)** | Required to create a case | App functionality | `CaseWizard.tsx` + `ToothChart.tsx`: tooth positions, missing teeth, implant specifications; 3D scans | Google's definition (from memory): *"information about health, such as medical records or symptoms."* This data describes a patient's teeth and implants. It is about a **third party** (the patient), not the app user, and can be linked to the patient through the dentist. **Verify** whether Google counts third-party data entered by professionals. If unsure, keep "Collected". |
+| Fitness info | Not collected | — | — | — | |
 
 ### Photos and videos
-| Type | Collected? | Required/optional | Purposes | Notes |
-|---|---|---|---|---|
-| Photos | **Yes** | Optional | App functionality, Account management | Employee profile photo and lab logo. The new version does **not** accept case photos; 2 legacy case photos remain stored. |
-| Videos | **No** for the new version | — | — | The new version cannot upload videos. **1 legacy MP4 remains stored and downloadable.** See decision D2 below. |
+| Type | Answer | Req./opt. | Purposes | Evidence | Notes |
+|---|---|---|---|---|---|
+| Photos | **Collected** | Optional | App functionality | `profile.tsx:41` (profile photo), `admin/lab.tsx:57` (lab logo); `expo-image-picker` gallery only, camera disabled (`app.json`); permission text corrected to "only to set your profile picture and your laboratory logo" | Case photos are rejected by this version. |
+| Videos | **Not collected** | — | — | Upload whitelist: STL/PLY/OBJ/3MF/DCM (`files.ts`, attachments trigger, storage policy) | 1 legacy MP4 remains stored (administrators only, name removed). See report §3.4. |
 
-### Files and docs
-| Type | Collected? | Required/optional | Purposes | Notes |
-|---|---|---|---|---|
-| Files and docs | **Yes** | Optional | App functionality | 3D production files (STL/PLY/OBJ/3MF/DCM) |
+### Audio, files, calendar, contacts
+| Type | Answer | Evidence |
+|---|---|---|
+| Voice/sound recordings, music, other audio | Not collected | `RECORD_AUDIO` blocked (`app.json`); image picker microphone disabled |
+| Files and docs | **Collected**, optional, App functionality | 3D production files (`files.ts`, `case/[id].tsx`, `CaseWizard.tsx`) |
+| Calendar events | Not collected | Dates are case due dates, not calendar access |
+| Contacts | Not collected | No contacts permission or API |
 
 ### App activity
-| Type | Collected? | Required/optional | Purposes | Notes |
+| Type | Answer | Req./opt. | Purposes | Evidence |
 |---|---|---|---|---|
-| App interactions | **Yes** | Required | App functionality, Fraud prevention/security/compliance | Production history and audit log (who did what, when) |
-| Other user-generated content | **Yes** | Optional | App functionality | Case notes, manufacturing notes, QC reasons, clinic order references |
-| In-app search history, Installed apps, Other actions | No | — | — | Search runs on the device and is not stored |
+| App interactions | **Collected** | Required | App functionality, Fraud prevention/security/compliance | `case_history` (production actions), `audit_logs` (database changes), `employees.last_login_at` |
+| In-app search history | Not collected | — | — | Search filters the loaded list on the device (`queries.ts` `filterCases`); nothing is sent or stored |
+| Installed apps | Not collected | — | — | — |
+| Other user-generated content | **Collected** | Optional | App functionality | Case notes, manufacturing notes, QC reasons, clinic order references, dentist notes |
+| Other actions | Not collected | — | — | — |
 
-### Not collected
-| Category | Answer | Notes |
+### Not collected (with evidence)
+| Category | Evidence | Notes |
 |---|---|---|
-| Location (approximate / precise) | No | Not requested. Supabase's server logs record IP addresses for security, but the app never derives location from them. |
-| Financial info | No | |
-| Messages (emails, SMS, other in-app messages) | No | In-app notifications are system events, not user messages |
-| Audio files, voice recordings, music | No | Microphone permission is blocked in `app.json` |
-| Contacts, Calendar | No | |
-| Web browsing | No | |
-| App info and performance (crash logs, diagnostics) | No | No crash-reporting or analytics SDK |
-| Device or other IDs | No | No advertising ID, no push token, no device identifiers read by the app |
+| Location (approximate / precise) | No location permission or API | Supabase records request IP addresses in its platform logs for security; the app never derives a location from them. **Verify** Google's current position on IP addresses. |
+| Financial info | No payment features | |
+| Messages (email, SMS, in-app messages) | Notifications are system-generated production events (`notifications` table), not user-to-user messages | |
+| Web browsing | No in-app browser history | |
+| App info and performance (crash logs, diagnostics, other) | No crash-reporting or analytics SDK in `package.json`. `expo-updates` has no update URL in `app.json`, so it makes no update checks. | |
+| Device or other IDs | No advertising ID, push token or device identifier read by the app | Supabase Auth stores session metadata (IP, user agent) for login security. **Verify** whether Google counts these. |
 
 ## Section 3 — Security practices
-- Data encrypted in transit: **Yes**.
-- Deletion: **Yes**. Account deletion and laboratory deletion are in the app; the
-  privacy policy URL documents both.
-- Independent security review: **No** (do not claim it).
-- Committed to Play Families policy: not applicable (not for children).
+- Encrypted in transit: **Yes** (see above).
+- Deletion request: **Yes**: in the app, plus the privacy page link.
+- Independent security review: **No.** Do not claim it.
+- Families policy: not applicable (professional app, not for children).
 
-## Decisions for you before submitting
-
-1. **D1 — Health info.** I recommend declaring **Yes**. Declaring No is defensible only if
-   you are confident tooth, implant and scan data is not "health info". Google may
-   disagree, and a mismatch between the form and the app's behaviour is a policy
-   violation in itself.
-2. **D2 — Legacy photos and video.** The form describes what the app collects. The new
-   version collects neither, but legacy files remain downloadable. The cleanest options
-   are:
-   - (a) ask the 1–2 labs concerned to review, export or delete them; or
-   - (b) keep them and also tick Videos (and case photos) conservatively.
-
-   Leaving them stored and undeclared is the weakest position.
-3. **D3 — Legacy patient names.** They are no longer collected and are hidden from users,
-   but they remain stored in 10 labs (15 names). Same choice as D2: plan their export or
-   deletion (Phase 2, separate approval), or keep "Name" declared, which is already the
-   case because of employee names.
-4. **The Data Safety form does not decide whether you need an Organization account.** That
-   comes from the Health apps declaration and the app's features. See the pre-deployment
-   report, section 4.
+## Decisions for you
+1. **D1 — Health info:** recommended **Collected** (see the row above).
+2. **D2 — Legacy photos and video:** see pre-deployment report §3.4.
+   - If they are deleted by their laboratories before you submit, the answers above are
+     complete.
+   - If they are kept, they are stored data but not collected by this version. Ticking
+     Photos (already Yes) covers photos. For the video, the strictly conservative choice
+     is to tick Videos as well.
+3. **D3 — Legacy patient names:** "Name" is declared anyway because of employees and
+   dentists. Nothing changes in the form, but the privacy policy §3 and §7 must be
+   published.
+4. **The Data Safety form does not decide whether an Organization account is required.**
+   That comes from the Health apps declaration and the app's features (report §4).

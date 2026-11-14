@@ -307,5 +307,24 @@ begin
 end;
 $$;
 
+-- legacy-file access rule and redaction helpers (section 7–8 of the migration).
+-- NOTE: file names already redacted by scripts/redact-legacy-files.mjs are NOT
+-- restored by this script (only the encrypted backup holds the originals).
+drop policy if exists attachments_select on public.attachments;
+create policy attachments_select on public.attachments for select to authenticated
+  using (lab_id = public.current_lab_id() and public.can_view_case(case_id));
+drop policy if exists case_files_read on storage.objects;
+create policy case_files_read on storage.objects for select to authenticated
+  using (
+    bucket_id = 'case-files'
+    and (string_to_array(name, '/'))[1] = public.current_lab_id()::text
+    and public.can_view_case(public.storage_case_id(name))
+  );
+drop function if exists public.can_read_case_object(text);
+drop function if exists public.is_legacy_sensitive_file(text, text);
+drop function if exists public.redact_legacy_attachment(uuid, text);
+drop function if exists public.redact_legacy_file_names();
+drop function if exists public._redacted_path(text);
+
 -- migration history: mark 20261114155851 as not applied
 delete from supabase_migrations.schema_migrations where version = '20261114155851';

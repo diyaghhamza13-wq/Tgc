@@ -34,7 +34,7 @@ DIGITAL PRESCRIPTION
 • 14 restoration types: crowns, veneers, inlays, onlays, bridges, telescopic, hybrid, bars, partials, custom abutments, surgical guides…
 • Materials: zirconia, E.max, PMMA, CoCr, titanium… with shade, translucency, block and lot numbers
 • Implant details: manufacturer, system, connection, platform, diameter, length, scanbody, Ti-base, screw channel
-• Attach STL, PLY, OBJ, DICOM, PDF and photos
+• Attach 3D production files (STL, PLY, OBJ, 3MF, 3Shape DCM). No patient names, photos or medical images
 
 PRODUCTION WORKFLOW
 • Reception → CAD → Milling/CAM → Ceramics → Finishing → Quality control → Delivery
@@ -75,7 +75,7 @@ Dental Lab Manager يربط كل العاملين في مختبر الأسنان
 • 14 نوعًا من التعويضات: تيجان، قشور، Inlay وOnlay، جسور، تلسكوبي، هجين، قضبان، أطقم جزئية، دعامات مخصصة، أدلة جراحية…
 • المواد: زركونيا، E.max، PMMA، كوبالت كروم، تيتانيوم… مع اللون والشفافية ومرجع البلوك ورقم الدفعة
 • معلومات الزرعة: الشركة، النظام، الوصلة، المنصة، القطر، الطول، Scanbody، Ti-base، قناة البرغي
-• إرفاق ملفات STL وPLY وOBJ وDICOM وPDF والصور
+• إرفاق ملفات الإنتاج ثلاثية الأبعاد (STL وPLY وOBJ و3MF وDCM من 3Shape). بدون أسماء المرضى أو صورهم أو صور طبية
 
 سير الإنتاج
 • الاستلام ← CAD ← التفريز ← الخزف ← التشطيب ← مراقبة الجودة ← التسليم
@@ -116,7 +116,7 @@ PRESCRIPTION NUMÉRIQUE
 • 14 types de restaurations : couronnes, facettes, inlays, onlays, bridges, télescopiques, hybrides, barres, partiels, piliers personnalisés, guides chirurgicaux…
 • Matériaux : zircone, E.max, PMMA, CoCr, titane… avec teinte, translucidité, référence du bloc et numéro de lot
 • Implants : fabricant, système, connexion, plateforme, diamètre, longueur, scanbody, Ti-base, puits de vis
-• Fichiers STL, PLY, OBJ, DICOM, PDF et photos
+• Fichiers 3D de production (STL, PLY, OBJ, 3MF, DCM 3Shape). Ni noms de patients, ni photos, ni imagerie médicale
 
 FLUX DE PRODUCTION
 • Réception → CAO → Usinage/FAO → Céramique → Finition → Contrôle qualité → Livraison

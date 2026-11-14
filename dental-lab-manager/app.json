@@ -43,7 +43,7 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Dental Lab Manager uses your photos to attach case images and to set your profile picture and laboratory logo.",
+          "photosPermission": "Dental Lab Manager uses your photos only to set your profile picture and your laboratory logo.",
           "cameraPermission": false,
           "microphonePermission": false
         }
