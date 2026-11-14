@@ -1,12 +1,16 @@
-# Google Play Data Safety — DRAFT v3 answers for Phase 1
+# Google Play Data Safety — DRAFT v4 answers for Phase 1
 
-> **Status: draft for review. Nothing has been submitted.**
-> These answers describe the app **after** Phase 1 is deployed. Submit them only after
-> deployment, and after the approved privacy policy is published.
+> **Status: final draft for review. Nothing has been submitted.**
+> These answers describe the app **after** Phase 1 is deployed (migration
+> `20261114155851` applied and an Android build containing the Phase 1 code). Submit them
+> only after that, and after privacy policy v4 is published.
 >
-> **Changes since v2:**
-> - The backup project is marked as planned.
-> - The legacy photo/video row now follows your decision (no action on them).
+> **Changes since v3:**
+> - **Backups removed:** no backup is in operation, so the backup project no longer
+>   appears among the service providers.
+> - **Earlier file names unchanged (your decision, option C):** no answer changes; the
+>   privacy policy v4 §3 says who can still see them.
+> - Corrected section references to the pre-deployment report (§5).
 >
 > **Verification limits — please read:**
 > - Every answer below was **checked against the actual code**; the evidence column
@@ -41,14 +45,14 @@
 | Collects or shares required user data types? | **Yes** | See section 2 | — |
 | All user data encrypted in transit? | **Yes** | `eas.json`: `EXPO_PUBLIC_SUPABASE_URL=https://…`; `supabase-js` uses HTTPS. No cleartext endpoints. | Data sent over TLS/HTTPS |
 | Users can request data deletion? | **Yes** | `profile.tsx` (Delete my account → `manage-employee` `delete_my_account`); lab profile (Delete this laboratory → `delete_lab`); privacy policy §7–8 | Google also asks for a **web link** where deletion can be requested. Use `https://dental-lab-manager.netlify.app/privacy`, which must contain the approved policy §7–8 (**not published yet**). **Verify** this satisfies the current account-deletion requirement. |
-| Data shared with third parties? | **No** | Only Supabase (hosting; and, **once created**, the separate backup project, which holds encrypted database backups) and Netlify (web) receive data, as service providers | Transfers to service providers that process data on your behalf are **not** "sharing". **Verify.** |
+| Data shared with third parties? | **No** | Only Supabase (hosting: database, authentication, file storage) and Netlify (web version) receive data, as service providers | Transfers to service providers that process data on your behalf are **not** "sharing". **Verify.** |
 
 ## Section 2 — Data types
 
 ### Personal info
 | Type | Answer | Req./opt. | Purposes | Evidence | Notes |
 |---|---|---|---|---|---|
-| Name | **Collected** | Required | App functionality, Account management | Employee name required (`admin/employee/[id].tsx`, `register.tsx`); dentist name required (`admin/catalog.tsx`) | Legacy patient names stored, not collected by this version |
+| Name | **Collected** | Required | App functionality, Account management | Employee name required (`admin/employee/[id].tsx`, `register.tsx`); dentist name required (`admin/catalog.tsx`) | Legacy patient names stored, not collected by this version, not shown in the app (policy §3) |
 | Email address | **Collected** | Optional | App functionality, Account management | Employee email (`admin/employee/[id].tsx:82`), lab email (`admin/lab.tsx:77`), dentist email (`catalog.tsx`) | |
 | User IDs | **Collected** | Required | App functionality, Account management, Fraud prevention/security/compliance | Lab code, employee code, Supabase account IDs (`employee-login`) | |
 | Address | **Collected** | Optional | App functionality | Lab address/city (`admin/lab.tsx:78–79`), dentist address/city (`catalog.tsx`) | Business addresses. **Verify** whether Google expects business addresses here; declaring is the safe choice. |
@@ -66,7 +70,7 @@
 | Type | Answer | Req./opt. | Purposes | Evidence | Notes |
 |---|---|---|---|---|---|
 | Photos | **Collected** | Optional | App functionality | `profile.tsx:41` (profile photo), `admin/lab.tsx:57` (lab logo); `expo-image-picker` gallery only, camera disabled (`app.json`); permission text corrected to "only to set your profile picture and your laboratory logo" | Case photos are rejected by this version. |
-| Videos | **Not collected** by this version | — | — | Upload whitelist: STL/PLY/OBJ/3MF/DCM (`files.ts`, attachments trigger, storage policy) | 1 legacy MP4 remains stored, visible to administrators only. It is left untouched per your instruction. See report §5.4. |
+| Videos | **Not collected** by this version | — | — | Upload whitelist: STL/PLY/OBJ/3MF/DCM (`files.ts`, attachments trigger, storage policy) | 1 legacy MP4 remains stored, visible to administrators only. It is left untouched per your instruction. See report §5. |
 
 ### Audio, files, calendar, contacts
 | Type | Answer | Evidence |
@@ -103,7 +107,8 @@
 
 ## Decisions for you
 1. **D1 — Health info:** recommended **Collected** (see the row above).
-2. **D2 — Legacy photos and video:** see pre-deployment report §5.4.
+2. **D2 — Legacy photos and video:** see pre-deployment report §5. Their names and
+   content stay unchanged (option C).
    - Per your instruction, nobody on the operator side modifies or deletes them.
    - If their laboratories delete them before you submit, the answers above are
      complete.
@@ -115,3 +120,18 @@
    published.
 4. **The Data Safety form does not decide whether an Organization account is required.**
    That comes from the Health apps declaration and the app's features (report §7).
+
+## Consistency with privacy policy v4
+| Data Safety answer | Policy v4 |
+|---|---|
+| Name, email, user IDs, address, phone, other info (role etc.) | §2 Laboratory, Employees, Dentists |
+| Health info (conservative) | §2 Manufacturing specification, §6 Health-related information |
+| Photos (profile photo, lab logo) | §2 Employees (profile photo), Laboratory (logo) |
+| Videos / case photos not collected | §2 "What the app does not collect" |
+| Files and docs (3D files) | §2 Production files |
+| App interactions | §2 Technical data (audit logs) |
+| Other user-generated content | §2 Cases (order reference, notes), §6 free-text reminder |
+| No sharing; service providers only | §5 Supabase and Netlify |
+| Encrypted in transit | §5 HTTPS |
+| Deletion in the app + web link | §8 (in-app deletion), §7 (requests), published at `/privacy` |
+| No ads, analytics or tracking | §4 |

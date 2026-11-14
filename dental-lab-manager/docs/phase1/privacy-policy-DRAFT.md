@@ -1,20 +1,17 @@
-# Privacy Policy — DRAFT v3 for Phase 1 (not published)
+# Privacy Policy — DRAFT v4 for Phase 1 (not published)
 
-> **Status: draft for review.** Not live. The in-app policy (`src/lib/privacy.ts`, shown at
-> `/privacy`) and any external page stay unchanged until you approve this text.
-> `[DEPLOYMENT DATE]` must be replaced by the real date Phase 1 goes live.
-> French and Arabic versions will be translated from the approved English text.
+> **Status: final draft for review.** Not live. The in-app policy (`src/lib/privacy.ts`,
+> shown in the app and at `/privacy` on the web) stays unchanged until you approve this
+> text; it is then inserted there in English, French and Arabic and goes live with the
+> Phase 1 deployment.
+> The only placeholder left is `[DEPLOYMENT DATE]`: the date Phase 1 goes live.
 >
-> **Editing markers — remove them before publishing:**
-> - `[[IF ACTIVE: … ]]`: publish the text inside **only** once that safeguard is
->   really in operation. Otherwise delete the whole block.
-> - `[[CHOOSE: A | B]]`: keep the option that matches your decision.
->
-> **Changes since v2:**
-> - The private backup key belongs only to the operator and never to a developer.
-> - Backups and their retention are marked as conditional (not yet active).
-> - Backups are stated to contain the database only: no files, no login accounts.
-> - Legacy file names follow your decision on photos and videos.
+> **Changes since v3:**
+> - **Earlier file names (your decision, option C):** no earlier file is renamed. The
+>   policy now says exactly who can still see earlier file names (section 3).
+> - **Backups removed:** no backup is in operation, so every backup statement was
+>   deleted (sections 5, 7 and 8). Add them back only when a backup really runs.
+> - All editing markers removed.
 
 ---
 
@@ -91,17 +88,19 @@ deleted. It is handled as follows.
     files can now be seen and downloaded **only by the laboratory's administrators.**
     The administrators can review them and delete them in the app.
   - Earlier 3D production files remain available to the employees who work on the case.
-  - **The content of earlier files has not been changed.**
-  - [[CHOOSE:
-    - **A (all earlier files):** The original names of earlier files have been replaced
-      by technical labels (for example "photo.jpg"). This applies to the app, the stored
-      file locations, the production history and the audit logs.
-    - **B (3D files only):** The original names of earlier 3D production files have been
-      replaced by technical labels in the app, the stored file locations, the production
-      history and the audit logs. Earlier photos, videos and other non-3D files keep
-      their original file names. These names are visible only to the laboratory's
-      administrators.
-    ]]
+  - **The content and the names of earlier files have not been changed.**
+    - Earlier photos, videos and other non-3D files keep their original file names.
+      These names are visible only to the laboratory's administrators.
+    - Earlier 3D production files keep their original file names, which remain visible
+      to the employees who work on the case.
+    - Entries recorded in the production history before [DEPLOYMENT DATE] keep the file
+      names as they were recorded. When an earlier file is deleted, the new production
+      history entry shows only a technical label (for example "photo.jpg"), not its
+      original name.
+    - The security audit log keeps file names as recorded, including the original name
+      when an earlier file is deleted. It is visible only to employees with the audit
+      permission (by default, the laboratory's administrators).
+  - A laboratory administrator can delete an earlier file in the app at any time.
 
 ## 4. Why we use it
 
@@ -124,22 +123,6 @@ Each laboratory's data is isolated: employees of one laboratory can never access
 laboratory's data. Inside a laboratory, access depends on each employee's role and
 permissions. Files are private and can only be opened by authorised employees through
 temporary links. All connections are encrypted (HTTPS).
-
-[[IF ACTIVE:
-**Backups.** We keep encrypted backups of the database:
-- **What they contain:** the database only, meaning laboratories, employees, dentists,
-  cases and their history, including earlier patient names. Uploaded files and login
-  accounts are **not** part of these backups.
-- **How:** backups are made on the operator's own device, using a read-only database
-  login. Each backup is encrypted in memory, before it is stored anywhere. It can only
-  be decrypted with a private key that belongs to the operator and is kept on the
-  operator's own device. **The key is never given to any developer, contractor,
-  automated assistant or hosting provider.**
-- **Where:** the encrypted files are kept on the operator's device and, as encrypted
-  copies only, in storage the operator controls [[CHOOSE: the operator's Google Drive |
-  a separate Supabase project in London | both]].
-- **Retention:** backups are deleted after at most 30 days.
-]]
 
 **Operator access.** As the operator, Hamza Diyagh has technical access to the database.
 This access is used only to run, secure and repair the service, and to carry out the
@@ -180,7 +163,6 @@ handled **manually** by the operator:
    plain e-mail.
 4. **Deletion:** the operator deletes the laboratory's earlier patient names from the
    database. The cases themselves (manufacturing data) remain.
-   [[IF ACTIVE: Copies in backups disappear when those backups expire (section 5).]]
 5. **Timing:** the operator answers within 30 days.
 
 **Patients** cannot be identified by the operator, who holds no patient contact
@@ -195,8 +177,6 @@ Data is kept as long as the laboratory uses the service.
   including files, accounts and any earlier patient names (Lab profile → Delete this
   laboratory).
 - Deletion is permanent.
-  [[IF ACTIVE: Copies in database backups are removed when those backups expire, after
-  at most 30 days.]]
 
 ## 9. Your rights
 
@@ -225,10 +205,9 @@ If this policy changes, the new version is published on this page with its updat
 | Lab users (including administrators) cannot see earlier patient names | Migration §2: privileges on `patients` revoked, policies dropped | Tested locally; active only after deployment |
 | Only 3D production files accepted | Rules enforced in three places: `files.ts`, the attachments trigger, and the storage insert policy (migration §5) | Tested locally; active only after deployment |
 | Earlier non-3D files visible to administrators only | Migration §7 | Tested locally; active only after deployment |
-| Earlier file names replaced (option A or B) | Migration §8 + `scripts/redact-legacy-files.mjs` (default = B; `INCLUDE_SENSITIVE=1` = A). Reversible with `scripts/reverse-legacy-file-names.mjs` and a backup taken before. | Tested locally (forward + reverse); **runs only with your approval**; choose A or B |
+| Earlier file names unchanged (option C, your decision 2026-11-14) | No renaming script is run (`scripts/redact-legacy-files.mjs` stays unused). Display: non-3D legacy files to administrators only (migration §7); legacy 3D files to case employees as before; existing `case_history` entries unchanged; new deletion entries in `case_history` use `_safe_file_label` (migration §6); `audit_logs` records full attachment rows incl. `file_name` (trigger `attachments_audit`), readable only with `audit.view` (`audit_select` policy). | Tested locally; active only after deployment |
 | Earlier patient names deleted on lab deletion | `patients.lab_id` foreign key `on delete cascade` | Active today |
 | Manual copy/deletion process | No app function. Done by the operator via the Supabase dashboard. A deletion must first clear `cases.patient_id` for that lab (foreign key), then delete `patients` rows. | **Organisational promise.** Publish only if you can honour the verification and the 30 days. |
-| Backups (database only, made and encrypted on the operator's phone with a read-only login, key with the operator, ≤ 30 days) | `docs/backup/README.md`, `docs/backup/readonly-role-setup.sql` | **Planned, not active.** No backup project, key or backup exists yet. Keep the `[[IF ACTIVE]]` blocks out until all are true. |
-| Private key never held by any developer or assistant | The export encrypts to the operator's *public* key. Decryption (restore, reverse) runs on the operator's phone. Claude never receives the private key. | Design rule |
+| No backup statement | Backups are paused (your instruction, 2026-11-14): no backup runs, so the policy makes no backup claim. | Add a backup section only once a backup actually runs |
 | No analytics/tracking | `package.json`: no analytics, crash-reporting or push SDK; `expo-updates` has no update URL | Active today |
 | Provider server logs (IP) | Supabase/Netlify platform logs; not used by the app | Active today (provider) |
