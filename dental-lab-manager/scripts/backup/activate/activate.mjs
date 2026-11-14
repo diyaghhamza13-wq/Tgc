@@ -15,7 +15,7 @@
  *   node scripts/backup/activate/activate.mjs <command> [args]
  *     check <runner-ref>                    runner project: region, organization, status
  *     b2-setup <runner-ref>                 B2 bucket (Object Lock compliance 35 d, lifecycle) + 2 runner keys → runner secrets
- *     runner-setup <runner-ref> <age1…>     runner database + production URL / anon key / public key → runner secrets
+ *     runner-setup <runner-ref> [age1…]     runner database + production URL / anon key [/ public key] → runner secrets
  *     deploy <runner-ref>                   deploy dlm-backup (deno.lock, verify_jwt off)
  *     prod-migration                        PRODUCTION: apply 20261115090000_backup_read_access.sql   (approval!)
  *     token <runner-ref>                    PRODUCTION: register a new token hash; runner gets the token (approval!)
@@ -125,13 +125,14 @@ async function b2Setup(ref) {
 async function runnerSetup(ref, recipients) {
   await check(ref);
   const pubs = (recipients ?? '').split(/[\s,]+/).filter(Boolean);
-  if (!pubs.length || !pubs.every((k) => /^age1[0-9a-z]{58}$/.test(k))) die('give the PUBLIC key(s) age1… (never the private key)');
+  if (pubs.some((k) => /^AGE-SECRET-KEY/i.test(k))) die('that is a PRIVATE key: never give it to anyone; give the public key age1…');
+  if (!pubs.every((k) => /^age1[0-9a-z]{58}$/.test(k))) die('give the PUBLIC key(s) age1…');
   const migration = fs.readFileSync(path.join(ROOT, 'backup-runner/supabase/migrations/20261115090100_runner_state.sql'), 'utf8');
   const done = await query(ref, "select to_regclass('dlm_runner.runs') is not null as present");
   if (!done[0].present) await query(ref, `begin;\nset local role postgres;\n${migration}\ncommit;`);
-  await setSecrets(ref, { DLM_PROD_URL: `https://${PROD_REF}.supabase.co`, DLM_PROD_ANON_KEY: prodAnonKey(), DLM_BACKUP_AGE_RECIPIENTS: pubs.join(' ') });
+  await setSecrets(ref, { DLM_PROD_URL: `https://${PROD_REF}.supabase.co`, DLM_PROD_ANON_KEY: prodAnonKey(), ...(pubs.length ? { DLM_BACKUP_AGE_RECIPIENTS: pubs.join(' ') } : {}) });
   const t = await query(ref, "select (select count(*) from pg_proc where proname like 'dlm_runner_%')::int as rpcs, (select count(*) from vault.secrets where name = 'dlm_backup_trigger')::int as trigger_secret, (select string_agg(extname, ',' order by extname) from pg_extension where extname in ('pg_cron','pg_net')) as ext");
-  console.log(JSON.stringify({ runner_database: t[0], runner_secrets_set: 3 }));
+  console.log(JSON.stringify({ runner_database: t[0], runner_secrets_set: pubs.length ? 3 : 2, public_key_set: pubs.length > 0 }));
 }
 
 function deploy(ref) {
