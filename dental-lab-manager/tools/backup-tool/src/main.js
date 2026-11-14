@@ -59,8 +59,8 @@ $('verify').onclick = async () => {
     if (man.db?.cipher_sha256 && (await sha256hex(db)) !== man.db.cipher_sha256) throw new Error('the encrypted snapshot does not match the manifest (wrong or damaged file)');
     const plain = await decrypt(db);
     const b = JSON.parse(new TextDecoder().decode(plain));
+    const r = await verifyAgainstManifest(b, man, sha256hex, plain);
     plain.fill(0);
-    const r = await verifyAgainstManifest(b, man, sha256hex);
     if (!r.ok) throw new Error(`mismatch in: ${r.problems.join(', ')}`);
     lastBackup = b;
     $('sqlbtn').disabled = false;

@@ -68,10 +68,11 @@ inside production would put the whole production project at risk if compromised.
 ## 3. Production access mechanism: careful review
 
 ### 3.1 Database
-- `public.dlm_backup_runner_snapshot()` is the **only** backup function callable over
-  the API. It is callable **only by `anon`** and is `STABLE`, so PostgREST runs it in a
-  read-only transaction.
-- It calls `public.dlm_backup_snapshot()`, which is owned by the `NOLOGIN` role
+- `public.dlm_backup_runner_snapshot()` and `public.dlm_backup_runner_objects()` (the
+  stored-object list for later steps) are the **only** backup functions callable over
+  the API. They are callable **only by `anon`** with a valid token, and are `STABLE`, so
+  PostgREST runs them in a read-only transaction.
+- The snapshot wrapper calls `public.dlm_backup_snapshot()`, which is owned by the `NOLOGIN` role
   `dlm_backup_reader` (`SECURITY DEFINER`) and checks itself before reading:
   - read-only transaction;
   - `BYPASSRLS`, no login, not superuser;
@@ -141,7 +142,7 @@ of its secrets.
 | **Modify, delete or insert** production data or files; change buckets; create signed URLs; impersonate users | **No** | Tested: every write path refused; only `GET` requests reached production |
 | Keep access after **revocation** | **No** | Tested: refused immediately; no signed URLs could be created beforehand |
 | Read existing backups | No | The write key cannot read or list (the read key reads ciphertext only) |
-| **Overwrite or delete** existing backups | **No** | `If-None-Match` gives 412; an overwrite only adds a version; compliance lock blocks deletion, even by the admin key; restore uses the **first** version (tested with a fake snapshot + fake manifest: ignored and reported) |
+| **Overwrite or delete** existing backups | **No** | An overwrite only adds a version (no conditional write is relied on: B2 does not document `If-None-Match`). Hiding a key (B2 `writeFiles` allows delete markers) keeps every locked version. Compliance lock blocks deletion, even by the admin key. Restore uses the **first** version. Tested with a fake snapshot + fake manifest + a hidden file map and file copy: ignored, reported, and the genuine data restored. |
 | Decrypt anything | No | No private key |
 | **Disrupt future backups** | **Yes** | Stop running; upload garbage; falsify its own run log; mark runs successful |
 | Replace the encryption public key for future runs | Yes, if it can edit runner secrets | Manifests list the public keys; restore tooling and the offline page warn if a run is encrypted to any key other than yours *(tested)* |
@@ -195,14 +196,20 @@ of its secrets.
 | B3 | Restore read the **latest** object version, so a compromised runner could have substituted a fake manifest + snapshot | High | **Resolved:** restore reads the first version, reports extra versions, and refuses without version-listing permission *(tested)* |
 | B4 | `pg_net` grants `anon`/`authenticated` outbound HTTP and queue access | Medium | **Resolved for production:** no `pg_net` there (it is only in the runner project, which holds no production data); tripwire if installed |
 | B5 | A runner deployed into production by mistake would hold production's service key | High | **Mitigated:** the function refuses when its own URL equals production's, and refuses a service/secret key as the "anon key" *(tested)* |
-| B6 | Plaintext processed outside London | Medium | **Mitigated:** `x-region` + `SB_REGION` check *(tested locally; hosted behaviour to confirm)* |
+| B6 | Plaintext processed outside London | Medium | **Mitigated:** `x-region` + `SB_REGION` check *(tested locally; documented by Supabase: functions run near the caller unless `x-region` is sent; `SB_REGION` is set on hosted functions)* |
 | B7 | A compromised runner can read and copy all data and files | Inherent | Accepted. Read-only, revocable, expiring token; runner project with 2FA; quarterly drill. |
 | B8 | A compromised runner can disrupt or falsify future backups | Medium | Drill + revocation; detection needs you |
 | B9 | Token in a request header may appear in API gateway logs | Low (to confirm) | Logs stay within Supabase; rotate if exposed |
 | B10 | No rate limit on the anon-callable snapshot | Low | A wrong token costs one hash lookup; brute force of 256 bits is infeasible |
 | B11 | `anon` statement timeout 3 s | Low | ≈ 1 s for 25 MB of app tables *(tested)*; split per table if data grows |
-| B12 | Provider semantics simulated (versioning, compliance lock, lifecycle, `If-None-Match`, version listing, key scopes) | Medium | Verify on B2 before P1. R2 version listing is unknown. |
-| B13 | Lock file v5 support by the Supabase deploy bundler | Low | Confirm at P6 |
+| B12 | Provider semantics (versioning, compliance lock, lifecycle, version listing, key scopes) | Medium → **mostly verified** | Backblaze documentation confirms compliance lock, default retention, "lifecycle cannot delete locked files", version ids, version listing and per-bucket key capabilities (`BACKUP-RUNNER.md` §2). What depends on the real account is checked by the **activation self-test** (11 checks). |
+| B12a | B2 does not document `If-None-Match` | Low | **Resolved:** no longer sent; unique keys + first-version restore |
+| B12b | B2 `writeFiles` can hide files (delete markers) | Low | **Accepted:** data versions stay locked; restore reads versions *(tested as an attack)* |
+| B16 | Hosted Edge Function limits (2 s CPU, 256 MB) would be exceeded by one long run (files up to 500 MB) | High | **Resolved:** bounded resumable steps (≤ ~1 s CPU, ≤ ~150 MB measured; real-runtime test with limits enforced; negative control) |
+| B17 | Storage answers "not found" also for a refused token | Medium | **Resolved:** a file is recorded as gone only if missing from the token-checked object list |
+| B18 | Snapshot size bounded by memory | Low | 20 MB guard (fails cleanly) + health alert from 15 MB; production today far below |
+| B19 | Free runner project may pause after 7 days of low activity | Low | A database API call every 3 minutes; Supabase emails a warning a week before pausing; quarterly drill | Verify on B2 before P1. R2 version listing is unknown. |
+| B13 | Lock file v5 support by the Supabase deploy bundler | Low | **Resolved:** the Supabase bundler (edge-runtime v1.77.9) accepts it and rejects a tampered integrity hash |
 | B14 | `REMOVE_backup_read_access.sql` leaves an explicit, privilege-identical ACL on `supabase_migrations.schema_migrations` | Cosmetic | Grants are identical to the default owner rights |
 | B15 | Production's Management API token can run SQL with full rights | Medium (pre-existing) | Revoke when no longer needed (your decision) |
 
@@ -210,7 +217,8 @@ of its secrets.
 
 | Suite | Result |
 |---|---|
-| `scripts/tests/automated-backup-local-test.sh`: two local stacks, recording proxy, storage simulator | **147/147** end-to-end + **18/18** offline page |
+| `scripts/tests/automated-backup-local-test.sh`: two local stacks, recording proxy, storage simulator | **161/161** end-to-end + **18/18** offline page + **7/7** in the real Supabase Edge Runtime (256 MB / 2 s / 150 s enforced) + **7/7** performance per step + migration pre-check |
+| Deploy bundle (Supabase bundler) | 3.9 MB; `deno.lock` enforced |
 | `scripts/tests/service-role-audit-local.sh`, updated for Phase 1b, incl. the `pg_net` tripwire | **45/45** |
 | Earlier suites after a fresh reset | legacy round trip 29/29 · phone flow 21/21 · security 49/49 · restore drill 29/29 tables identical · integration 137/137 · `tsc` 0 · `deno check --frozen` 0 · rollback == production (functions and policies) |
 | Production migration → removal | Identical except B14 |
@@ -271,9 +279,18 @@ of its secrets.
     including the attacker's extra versions; a lifecycle shorter than the lock → the
     lock wins.
 
-## 10. Production steps
-P1–P11 in [`BACKUP-RUNNER.md`](BACKUP-RUNNER.md) §5. **None has been performed; each
-needs your separate approval.**
+**Added in the activation round:**
 
-Costs and external dependencies: [`BACKUP-RUNNER.md`](BACKUP-RUNNER.md) §7. **All are
-unverified.**
+| Section | What it shows |
+|---|---|
+| 11a | Activation self-test: 11/11 pass with correct keys; fails, naming the checks, with an over-powerful key |
+| 11b | 20 MB file in 2 segments over several steps; lease refuses a concurrent step; a dead step's lease is resumed; a file deleted mid-run is recorded as gone; segmented restore is byte-identical |
+| 7 | Snapshot-size early warning |
+| Performance | Per step ≤ 1,010 ms CPU and ≤ 151 MB; a 100 MB file in 4 steps; the 20 MB guard fails cleanly at 67 MB |
+
+## 10. Production steps
+Exact steps in [`BACKUP-RUNNER.md`](BACKUP-RUNNER.md) §6: Y1–Y7 by you, A1–A6 by me after
+your approval. **None has been performed.**
+
+Costs: [`BACKUP-RUNNER.md`](BACKUP-RUNNER.md) §8, verified on the providers' pages on
+2026-11-14. Still unverified: Backblaze's data-processing addendum.

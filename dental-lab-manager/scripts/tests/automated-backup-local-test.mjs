@@ -34,6 +34,20 @@ const fp = (v) => sha(String(v)).slice(0, 16);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const trigger = () => rsql("select decrypted_secret from vault.decrypted_secrets where name = 'dlm_backup_trigger'");
 const runFn = (secret, mode = 'backup', url = FN) => fetch(url, { method: 'POST', headers: { 'x-dlm-backup-trigger': secret, 'Content-Type': 'application/json' }, body: JSON.stringify({ mode }) });
+/** One full run: the start call, then "continue" calls (as the 3-minute schedule would) until idle. */
+const runAll = async (mode = 'backup', url = FN) => {
+  const first = await runFn(trigger(), mode, url);
+  const body = await first.json().catch(() => ({}));
+  for (let i = 0; i < 60; i++) { const c = await runFn(trigger(), 'continue', url); if ((await c.json().catch(() => ({}))).idle) break; }
+  return { r: first, body };
+};
+const lastSteps = () => Number(rsql("select steps from dlm_runner.runs where mode in ('backup','verify') order by started_at desc limit 1"));
+/** decrypts a v2 run's object list + file map and joins them by id */
+const loadMap = async (prefix) => {
+  const objs = new Map(JSON.parse(ageDecrypt(await simRaw(`${prefix}/objects.json.age`))).objects.map((o) => [o.id, o]));
+  return JSON.parse(ageDecrypt(await simRaw(`${prefix}/files.json.age`))).files.map((f) => ({ ...f, ...objs.get(f.id), id: f.id }));
+};
+const assemble = async (f) => Buffer.concat(await Promise.all(f.segments.map(async (sg) => ageDecrypt(await simRaw(sg.backup_key)))));
 const simState = async (base = SIM) => (await (await fetch(`${base}/__sim/state`)).json());
 const simRaw = async (key) => Buffer.from(await (await fetch(`${SIM}/__sim/raw?key=${encodeURIComponent(key)}`)).arrayBuffer());
 const ageDecrypt = (buf) => { const r = spawnSync('age', ['-d', '-i', path.join(W, 'k.txt')], { input: buf, maxBuffer: 1 << 30 }); if (r.status) throw new Error('decrypt failed'); return r.stdout; };
@@ -131,9 +145,13 @@ const userH = { apikey: ANON, Authorization: `Bearer ${userJwt}` };
 console.log('1. production: only token-gated, read-only access exists');
 check('production has no pg_net extension', sql("select count(*) from pg_extension where extname = 'pg_net'") === '0');
 check('production has no backup cron job', sql("select count(*) from cron.job where jobname like 'dlm-backup%'") === '0');
-check('backup functions in production: only the snapshot and its token-checked wrapper', sql("select string_agg(proname, ',' order by proname) from pg_proc where pronamespace = 'public'::regnamespace and proname like 'dlm_backup%'") === 'dlm_backup_runner_snapshot,dlm_backup_snapshot');
-check('the only backup function anon may call is the wrapper, and it is read-only (STABLE)', sql("select string_agg(proname || ':' || provolatile::text, ',') from pg_proc where proname like 'dlm_backup%' and has_function_privilege('anon', oid, 'EXECUTE')") === 'dlm_backup_runner_snapshot:s');
-check('service_role can execute neither snapshot function', sql("select (has_function_privilege('service_role', 'public.dlm_backup_snapshot()', 'EXECUTE') or has_function_privilege('service_role', 'public.dlm_backup_runner_snapshot()', 'EXECUTE'))::text") === 'false');
+check('backup functions in production: the snapshot and its two token-checked read functions only', sql("select string_agg(proname, ',' order by proname) from pg_proc where pronamespace = 'public'::regnamespace and proname like 'dlm_backup%'") === 'dlm_backup_runner_objects,dlm_backup_runner_snapshot,dlm_backup_snapshot');
+check('anon may call only the two token-checked functions, both read-only (STABLE)', sql("select string_agg(proname || ':' || provolatile::text, ',' order by proname) from pg_proc where proname like 'dlm_backup%' and has_function_privilege('anon', oid, 'EXECUTE')") === 'dlm_backup_runner_objects:s,dlm_backup_runner_snapshot:s');
+check('service_role can execute none of the backup functions', sql("select (has_function_privilege('service_role', 'public.dlm_backup_snapshot()', 'EXECUTE') or has_function_privilege('service_role', 'public.dlm_backup_runner_snapshot()', 'EXECUTE') or has_function_privilege('service_role', 'public.dlm_backup_runner_objects()', 'EXECUTE'))::text") === 'false');
+for (const [label, h, want] of [['anon without token', anonH, false], ['logged-in app user WITH the token', { ...userH, 'x-dlm-backup-token': TOKEN }, false], ['anon with the valid token', tokH(TOKEN), true]]) {
+  const o = await fetch(`${API}/rest/v1/rpc/dlm_backup_runner_objects`, { headers: h });
+  check(`object list — ${label}: ${want ? 'allowed' : 'refused'}`, want ? o.status === 200 : o.status === 401 || o.status === 403, o.status);
+}
 check('production stores only the SHA-256 of the token, never the token', sql(`select count(*) from dlm_backup.runner_tokens where token_hash = '${sha(TOKEN)}'`) === '1' && sql(`select count(*) from dlm_backup.runner_tokens where token_hash = '${TOKEN}' or label like '%dlmbk1%'`) === '0');
 check('the token table is not readable by anon, authenticated or service_role', sql("select (has_table_privilege('anon','dlm_backup.runner_tokens','SELECT') or has_table_privilege('authenticated','dlm_backup.runner_tokens','SELECT') or has_table_privilege('service_role','dlm_backup.runner_tokens','SELECT'))::text") === 'false');
 let x = await fetch(`${API}/rest/v1/runner_tokens`, { headers: { ...svcH, 'Accept-Profile': 'dlm_backup' } });
@@ -216,32 +234,34 @@ check('nothing recorded, nothing uploaded, and production received no request', 
 
 // ---------------------------------------------------------------------------
 console.log('3. first backup');
-r = await runFn(trigger());
-const body1 = await r.json();
+const firstRun = await runAll();
+r = firstRun.r;
+const body1 = firstRun.body;
 check('backup run accepted', r.ok && /^[0-9a-f-]{36}$/.test(body1.run ?? ''), body1);
 let run = lastRun();
 check('run succeeded', run?.status === 'succeeded', run);
 const prefix1 = run.run_prefix;
 const keys = Object.keys((await simState()).objects);
-check(`every stored file copied (${storedCount}, all buckets) + snapshot + file map + manifest`, keys.filter((k) => k.startsWith('files/')).length === storedCount && [`${prefix1}/db.json.age`, `${prefix1}/files.json.age`, `${prefix1}/manifest.json`].every((k) => keys.includes(k)), keys);
-check('object keys contain no names (only stamps, ids and hashes)', keys.every((k) => /^(runs\/[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}\/(db\.json\.age|files\.json\.age|manifest\.json)|files\/[0-9a-f-]{36}\/[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}\.age)$/.test(k)), keys);
+check(`every stored file copied (${storedCount}, all buckets) + snapshot + object list + file map + manifest`, keys.filter((k) => k.startsWith('files/')).length === storedCount && [`${prefix1}/db.json.age`, `${prefix1}/objects.json.age`, `${prefix1}/files.json.age`, `${prefix1}/manifest.json`].every((k) => keys.includes(k)), keys);
+check('object keys contain no names (only stamps, ids and hashes)', keys.every((k) => /^(runs\/[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}\/(db\.json\.age|objects\.json\.age|files\.json\.age|manifest\.json)|files\/[0-9a-f-]{36}\/[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}\.[0-9]{4}\.age)$/.test(k)), keys);
 const leak = [];
 for (const k of keys) { const raw = (await simRaw(k)).toString('latin1'); for (const m of MARKERS.concat(['FileMarker-LEGACYJPG', 'smile'])) if (raw.includes(m)) leak.push(`${k}:${m}`); }
 check('no plaintext marker (patient, lab, file names, file contents) in any stored object', leak.length === 0, leak);
 check('every object except the manifest is age-encrypted', (await Promise.all(keys.filter((k) => !k.endsWith('manifest.json')).map(async (k) => (await simRaw(k)).subarray(0, 21).toString() === 'age-encryption.org/v1'))).every(Boolean));
 const manifest1 = JSON.parse(await simRaw(`${prefix1}/manifest.json`));
-check('manifest: counts, hashes and the public key used (no names)', manifest1.format === 'dlm-backup-manifest-v1' && manifest1.storage_objects === storedCount && Object.keys(manifest1.tables).length === 29 && JSON.stringify(manifest1.recipients) === JSON.stringify([PUB]));
-const snap = JSON.parse(ageDecrypt(await simRaw(`${prefix1}/db.json.age`)));
-const vr = await verifyAgainstManifest(snap, manifest1, async (b) => sha(b));
+check('manifest: counts, hashes and the public key used (no names)', manifest1.format === 'dlm-backup-manifest-v2' && manifest1.storage_objects === storedCount && Object.keys(manifest1.tables).length === 29 && JSON.stringify(manifest1.recipients) === JSON.stringify([PUB]));
+const snapPlain = ageDecrypt(await simRaw(`${prefix1}/db.json.age`));
+const snap = JSON.parse(snapPlain);
+const vr = await verifyAgainstManifest(snap, manifest1, async (b) => sha(b), snapPlain);
 check('snapshot decrypts with the private key and matches the manifest (29 tables)', vr.ok && vr.tables === 29, vr);
 check('snapshot contains the legacy patient (complete backup, RLS bypassed)', JSON.stringify(snap.data.patients).includes('Zineb Marker-Patient'));
-const fmap = JSON.parse(ageDecrypt(await simRaw(`${prefix1}/files.json.age`))).files;
+const fmap = await loadMap(prefix1);
 let fileOk = 0;
-for (const f of fmap) { const plain = ageDecrypt(await simRaw(f.backup_key)); if (sha(plain) === f.sha256 && originals[`${f.bucket}/${f.name}`] === f.sha256) fileOk++; }
+for (const f of fmap) { const plain = await assemble(f); if (sha(plain) === f.sha256 && originals[`${f.bucket}/${f.name}`] === f.sha256) fileOk++; }
 check('every stored file decrypts to its exact original bytes (STL, PLY, OBJ, 3MF, DCM, photo, logo, other lab)', fileOk === storedCount, { fileOk, storedCount });
 const plog = proxyLog();
 check(`production received only GET requests (${plog.length}) with no body`, plog.length > 0 && plog.every((p) => p.method === 'GET' && p.bodyBytes === 0), [...new Set(plog.map((p) => p.method))]);
-check('…only the token-checked snapshot and file downloads', plog.every((p) => p.kind === 'rpc:dlm_backup_runner_snapshot' || p.kind === 'storage:download'), [...new Set(plog.map((p) => p.kind))]);
+check('…only the token-checked snapshot, object list and file downloads', plog.every((p) => ['rpc:dlm_backup_runner_snapshot', 'rpc:dlm_backup_runner_objects', 'storage:download'].includes(p.kind)), [...new Set(plog.map((p) => p.kind))]);
 check('…every request carried exactly production\'s PUBLIC anon key and the backup token', plog.every((p) => p.apikey === fp(ANON) && p.authorization === fp(ANON) && p.token === fp(TOKEN)));
 check('…never the runner\'s own service key, never production\'s service key', plog.every((p) => ![fp(RSRK), fp(SRK)].includes(p.apikey) && ![fp(RSRK), fp(SRK)].includes(p.authorization)));
 const runnerDump = dump('supabase_db_dlm-backup-runner', ['-n', 'dlm_runner']);
@@ -250,17 +270,17 @@ const fnLog = fs.readFileSync(path.join(W, 'fn.log'), 'utf8');
 check('function log contains no names, file paths or row data', MARKERS.concat(['smile', lab, kase]).every((m) => !fnLog.includes(m)));
 
 console.log('4. incremental copies, re-upload before expiry, changed files');
-await runFn(trigger()); run = lastRun();
+await runAll(); run = lastRun();
 check('second run: snapshot only, no file re-uploaded', run.status === 'succeeded' && run.manifest.files_uploaded_this_run === 0, run.manifest?.files_uploaded_this_run);
 const logoId = sql(`select id from storage.objects where name = '${logoPath}'`);
 rsql(`update dlm_runner.files set uploaded_at = now() - interval '29 days' where object_id = '${logoId}'`);
-await runFn(trigger()); run = lastRun();
+await runAll(); run = lastRun();
 check('a file copied 29 days ago is copied again (stays inside the 35-day window)', run.manifest.files_uploaded_this_run === 1, run.manifest?.files_uploaded_this_run);
 await fetch(`${API}/storage/v1/object/lab-assets/${logoPath}`, { method: 'PUT', headers: { ...svcH, 'Content-Type': 'image/png', 'x-upsert': 'true' }, body: Buffer.concat([logoBody, Buffer.from('v2')]) });
-await runFn(trigger()); run = lastRun();
+await runAll(); run = lastRun();
 check('a changed file is copied again', run.manifest.files_uploaded_this_run === 1, run.manifest?.files_uploaded_this_run);
 await fetch(`${API}/storage/v1/object/lab-assets/${logoPath}`, { method: 'PUT', headers: { ...svcH, 'Content-Type': 'image/png', 'x-upsert': 'true' }, body: logoBody });
-await runFn(trigger());
+await runAll();
 
 console.log('5. a compromised runner (its write-only key) cannot read, list, delete or overwrite existing backups');
 const victim = `${prefix1}/db.json.age`;
@@ -270,15 +290,16 @@ for (const [label, req] of [
   ['HEAD an existing backup', () => signed(SIM, 'HEAD', victim, null, ...W_KEY)],
   ['LIST the bucket', () => signed(SIM, 'GET', '', null, ...W_KEY, {}, '?list-type=2')],
   ['LIST object versions', () => signed(SIM, 'GET', '', null, ...W_KEY, {}, '?versions=')],
-  ['DELETE a backup', () => signed(SIM, 'DELETE', victim, null, ...W_KEY)],
   ['DELETE a specific version', () => signed(SIM, 'DELETE', victim, null, ...W_KEY, {}, `?versionId=${victimVersion.versionId}`)],
   ['change lifecycle / lock configuration', () => signed(SIM, 'PUT', '', Buffer.from('<LifecycleConfiguration/>'), ...W_KEY, {}, '?lifecycle')],
 ]) { x = await req(); check(`write-only key: ${label} → 403`, x.status === 403, x.status); }
 x = await signed(SIM, 'PUT', victim, Buffer.from('evil'), ...W_KEY, { 'if-none-match': '*' });
-check('write-only key: overwrite with If-None-Match → 412', x.status === 412, x.status);
-x = await signed(SIM, 'PUT', victim, Buffer.from('evil'), ...W_KEY);
-const vers = (await simState()).objects[victim];
-check('overwrite without If-None-Match only adds a new version; the original version is kept unchanged', x.status === 200 && vers.length === 2 && vers[0].sha256 === victimVersion.sha256, vers);
+check('If-None-Match is not relied on (ignored, as on B2): the overwrite is accepted…', x.status === 200, x.status);
+let vers = (await simState()).objects[victim];
+check('…but only adds a new version; the original version is kept unchanged', vers.length === 2 && vers[0].sha256 === victimVersion.sha256, vers);
+x = await signed(SIM, 'DELETE', victim, null, ...W_KEY);
+vers = (await simState()).objects[victim];
+check('write-only key can HIDE a key (delete marker, as B2 writeFiles allows) — every data version is kept', x.status === 204 && vers.length === 3 && vers[2].deleteMarker && vers[0].sha256 === victimVersion.sha256, vers);
 x = await signed(SIM, 'DELETE', victim, null, ...A_KEY, {}, `?versionId=${victimVersion.versionId}`);
 check('even the ADMIN key cannot delete the locked original version (compliance lock)', x.status === 403, x.status);
 x = await signed(SIM, 'PUT', 'runs/tamper.bin', Buffer.from('data'), ...W_KEY, { 'x-amz-content-sha256': sha('other') });
@@ -291,15 +312,15 @@ x = await signed(SIM, 'GET', '', null, ...R_KEY, {}, '?versions=');
 check('the runner read key cannot list (only the separate restore key can)', x.status === 403, x.status);
 
 console.log('6. weekly integrity check (read key: can read ciphertext, cannot decrypt)');
-await runFn(trigger(), 'verify'); run = lastRun();
+await runAll('verify'); run = lastRun();
 check('verify run succeeded over recent snapshots and all files (reads the pinned versions)', run.mode === 'verify' && run.status === 'succeeded' && run.files_total > storedCount, run);
-const someFile = fmap[0].backup_key;
+const someFile = fmap[0].segments[0].backup_key;
 await fetch(`${SIM}/__sim/corrupt`, { method: 'POST', body: JSON.stringify({ key: someFile }) });
-await runFn(trigger(), 'verify'); run = lastRun();
+await runAll('verify'); run = lastRun();
 check('a corrupted object is detected (verify run failed, no names in the error)', run.status === 'failed' && /^integrity_failed 1 of \d+$/.test(run.error ?? ''), run.error);
-await runFn(trigger()); run = lastRun();
+await runAll(); run = lastRun();
 check('self-healing: the next backup copies the damaged file again', run.status === 'succeeded' && run.manifest.files_uploaded_this_run === 1, run.manifest?.files_uploaded_this_run);
-await runFn(trigger(), 'verify'); run = lastRun();
+await runAll('verify'); run = lastRun();
 check('verify after self-healing succeeds', run.status === 'succeeded', run.error);
 
 console.log('7. health check (missed backups), in the runner project');
@@ -308,6 +329,10 @@ rsql('select dlm_runner.health()');
 check('no success in 26 h → one alert row', rsql("select count(*) from dlm_runner.runs where mode = 'health' and status = 'alert'") === '1');
 rsql('select dlm_runner.health()');
 check('repeated health check → still one alert (no flood)', rsql("select count(*) from dlm_runner.runs where mode = 'health'") === '1');
+rsql("update dlm_runner.runs set finished_at = now(), started_at = now() where id = (select id from dlm_runner.runs where mode = 'backup' and status = 'succeeded' order by started_at desc limit 1)");
+rsql("update dlm_runner.runs set manifest = jsonb_set(manifest, '{db,plain_bytes}', '16000000') where id = (select id from dlm_runner.runs where mode = 'backup' and status = 'succeeded' order by started_at desc limit 1)");
+rsql('select dlm_runner.health()'); rsql('select dlm_runner.health()');
+check('a snapshot over 15 MB raises one early-warning alert (runner limit 20 MB)', rsql("select count(*) from dlm_runner.runs where mode = 'health' and error like 'database snapshot over 15 MB%'") === '1');
 
 console.log('8. the runner refuses unsafe configurations BEFORE contacting anything');
 const runsBefore = rsql('select count(*) from dlm_runner.runs');
@@ -346,19 +371,25 @@ check('runner database holds no production credential (service key, anon key, to
 check('the token never appears in production query statistics', !statsHold(TOKEN));
 
 console.log('10. tampering by a compromised runner, then full restoration');
-await runFn(trigger()); run = lastRun();
+await runAll(); run = lastRun();
 const prefixR = run.run_prefix;
 const before = JSON.parse((await snapshotVia(tokH(TOKEN))).body);
 const beforeSums = Object.fromEntries(before.tables_in_snapshot.map((tb) => [tb, sha(JSON.stringify(before.data[tb]))]));
 // the attacker (write key + public key) adds a FAKE snapshot and a FAKE manifest matching it under the real run's keys
 const fake = { ...before, data: { ...before.data, patients: [] } };
-const fakeCipher = ageEncrypt(Buffer.from(JSON.stringify(fake)));
+const fakeCipher = ageEncrypt(Buffer.from(JSON.stringify(fake)));  // same bytes as fakePlain below
 x = await signed(SIM, 'PUT', `${prefixR}/db.json.age`, fakeCipher, ...W_KEY);
 const fakeVid = x.headers.get('x-amz-version-id');
 const realMan = JSON.parse(await simRaw(`${prefixR}/manifest.json`));
-const fakeMan = { ...realMan, tables: { ...realMan.tables, patients: { rows: 0, sha256: sha('[]') } }, db: { ...realMan.db, cipher_sha256: sha(fakeCipher), bytes: fakeCipher.length, version_id: fakeVid } };
+const fakePlain = Buffer.from(JSON.stringify(fake));
+const fakeMan = { ...realMan, tables: { ...realMan.tables, patients: { rows: 0 } }, db: { ...realMan.db, cipher_sha256: sha(fakeCipher), plain_sha256: sha(fakePlain), plain_bytes: fakePlain.length, bytes: fakeCipher.length, version_id: fakeVid } };
 x = await signed(SIM, 'PUT', `${prefixR}/manifest.json`, Buffer.from(JSON.stringify(fakeMan)), ...W_KEY);
 check('the attacker could add fake versions of the snapshot and the manifest (but not replace them)', x.status === 200 && (await simState()).objects[`${prefixR}/manifest.json`].length === 2);
+// …and HIDE (delete marker) the run's file map and one stored-file copy
+const mapR = await loadMap(prefixR);
+const hid1 = await signed(SIM, 'DELETE', `${prefixR}/files.json.age`, null, ...W_KEY);
+const hid2 = await signed(SIM, 'DELETE', mapR[0].segments[0].backup_key, null, ...W_KEY);
+check('the attacker could hide the file map and a stored-file copy (they now look deleted)', hid1.status === 204 && hid2.status === 204 && (await fetch(`${SIM}/__sim/raw?key=${encodeURIComponent(mapR[0].segments[0].backup_key)}`)).status === 404);
 const OUT = path.join(W, 'restore'); fs.rmSync(OUT, { recursive: true, force: true });
 const renv = (k) => ({ ...process.env, S3_ENDPOINT: SIM, S3_REGION: 'eu-test-1', S3_BUCKET: 'dlm-backups-test', S3_READ_KEY_ID: k[0], S3_READ_SECRET: k[1], AGE_IDENTITY: path.join(W, 'k.txt'), OUT_DIR: OUT, SUPABASE_URL: API, SUPABASE_SERVICE_ROLE_KEY: SRK });
 let rr = spawnSync('node', ['scripts/backup/offsite-restore.mjs', 'fetch', prefixR], { env: renv(R_KEY) });
@@ -395,7 +426,7 @@ check('plaintext restore files deleted', !fs.existsSync(OUT));
 console.log('11. scheduling in the RUNNER project (pg_cron + pg_net), pinned to London');
 rsql(`select vault.create_secret('http://${E.RUNNER_GW}:54401/', 'dlm_backup_function_url')`);
 execFileSync('psql', ['-X', '-q', '-v', 'ON_ERROR_STOP=1', '-d', RDB, '-f', 'backup-runner/supabase/schedule.sql'], { stdio: ['ignore', 'ignore', 'pipe'] });
-check('three jobs scheduled in the runner (daily backup, weekly verify, daily health)', rsql("select string_agg(jobname || '=' || schedule, ', ' order by jobname) from cron.job where jobname like 'dlm-backup-%'") === 'dlm-backup-daily=17 2 * * *, dlm-backup-health=47 3 * * *, dlm-backup-verify=27 4 * * 0');
+check('four jobs scheduled in the runner (continue every 3 min, daily backup, daily health, weekly verify)', rsql("select string_agg(jobname || '=' || schedule, ', ' order by jobname) from cron.job where jobname like 'dlm-backup-%'") === 'dlm-backup-continue=*/3 * * * *, dlm-backup-daily=17 2 * * *, dlm-backup-health=47 3 * * *, dlm-backup-verify=27 4 * * 0');
 const c0 = Number(rsql("select count(*) from dlm_runner.runs where mode = 'backup' and status = 'succeeded'"));
 rsql("select cron.schedule('dlm-backup-test-every-minute', '* * * * *', $$select dlm_runner.invoke('backup')$$)");
 let c1 = c0;
@@ -405,6 +436,49 @@ check('a runner pg_cron job triggered a successful backup through pg_net', c1 > 
 check('…the scheduled call carried x-region: eu-west-2', /test-serve: request x-region=eu-west-2/.test(fs.readFileSync(path.join(W, 'fn.log'), 'utf8')));
 rsql("select cron.unschedule(jobname) from cron.job where jobname like 'dlm-backup-%'");
 check('production still has no pg_net and no backup job', sql("select count(*) from pg_extension where extname = 'pg_net'") === '0' && sql("select count(*) from cron.job where jobname like 'dlm-backup%'") === '0');
+
+console.log('11a. activation self-test against the bucket and production');
+await (await runFn(trigger(), 'selftest')).json();
+let stRun = JSON.parse(rsql("select row_to_json(r) from (select status, error, manifest->'selftest' as checks from dlm_runner.runs where mode = 'selftest' order by started_at desc limit 1) r"));
+check(`self-test passes with correctly scoped keys (${Object.keys(stRun.checks ?? {}).length} checks: write-only key, pinned reads, compliance lock ≥ 34 days, hide keeps versions, production token)`, stRun.status === 'succeeded' && Object.keys(stRun.checks).length === 11 && Object.values(stRun.checks).every(Boolean), stRun);
+const stOnce = once({ DLM_TEST_MODE: 'selftest', DLM_TEST_TRIGGER: trigger(), DLM_BACKUP_S3_WRITE_KEY_ID: A_KEY[0], DLM_BACKUP_S3_WRITE_SECRET: A_KEY[1] });
+stRun = JSON.parse(rsql("select row_to_json(r) from (select status, error from dlm_runner.runs where mode = 'selftest' order by started_at desc limit 1) r"));
+check('self-test FAILS when the runner is given an over-powerful storage key (and names the failed checks)', stOnce.status === 200 && stRun.status === 'failed' && /write_key_cannot_read/.test(stRun.error) && /write_key_cannot_list/.test(stRun.error), stRun);
+
+console.log('11b. large files in 16 MB segments across several steps; a file deleted mid-run; one step at a time');
+const bigB = crypto.randomBytes(20 * 1048576);
+const bigA = crypto.randomBytes(40 * 1048576);
+const pB = `${lab}/${kase}/${crypto.randomUUID()}-big-b.stl`;
+const pA = `${lab}/${kase}/${crypto.randomUUID()}-big-a.stl`;
+await up('case-files', pB, 'model/stl', bigB);
+await up('case-files', pA, 'model/stl', bigA);
+r = await runFn(trigger());
+await r.json();
+let st = JSON.parse(rsql("select row_to_json(x) from (select status, phase, steps from dlm_runner.runs where mode = 'backup' order by started_at desc limit 1) x"));
+check('step 1 does the snapshot and stops after ~32 MB of files (run continues later)', st.status === 'running' && st.phase === 'files' && st.steps === 1, st);
+rsql("update dlm_runner.runs set lease_until = now() + interval '1 minute' where status = 'running'");
+x = await runFn(trigger(), 'continue');
+check('a second step while another holds the lease is refused (409), nothing done twice', x.status === 409, x.status);
+rsql("update dlm_runner.runs set lease_until = now() - interval '1 second' where status = 'running'");   // as if that step had died
+await fetch(`${API}/storage/v1/object/case-files`, { method: 'DELETE', headers: { ...svcH, 'Content-Type': 'application/json' }, body: JSON.stringify({ prefixes: [pA] }) });
+delete originals[`case-files/${pA}`];
+for (let i = 0; i < 20; i++) { const c = await runFn(trigger(), 'continue'); if ((await c.json()).idle) break; }
+run = lastRun();
+check(`the run is resumed after the expired lease and completes (${lastSteps()} steps)`, run.status === 'succeeded' && lastSteps() >= 2, run);
+const mapL = await loadMap(run.run_prefix);
+const fB = mapL.find((f) => f.name === pB);
+const fA = mapL.find((f) => f.name === pA);
+check('the 20 MB file is stored as 2 encrypted segments that reassemble byte-identically', fB?.segments.length === 2 && sha(await assemble(fB)) === sha(bigB), fB?.segments.length);
+check('the file deleted in production during the run is recorded as gone (no false copy)', fA?.state === 'gone' && run.manifest.files_gone === 1, fA?.state);
+const OUTL = path.join(W, 'restore-large'); fs.rmSync(OUTL, { recursive: true, force: true });
+const renvL = { ...process.env, S3_ENDPOINT: SIM, S3_REGION: 'eu-test-1', S3_BUCKET: 'dlm-backups-test', S3_READ_KEY_ID: RESTORE_KEY[0], S3_READ_SECRET: RESTORE_KEY[1], AGE_IDENTITY: path.join(W, 'k.txt'), OUT_DIR: OUTL, SUPABASE_URL: API, SUPABASE_SERVICE_ROLE_KEY: SRK };
+let rl = spawnSync('node', ['scripts/backup/offsite-restore.mjs', 'fetch', run.run_prefix], { env: renvL });
+check('offsite fetch of that run verifies and warns about the deleted file', rl.status === 0 && /deleted in production while this run was copying/.test(rl.stderr.toString()), rl.stdout.toString() + rl.stderr.toString());
+await fetch(`${API}/storage/v1/object/case-files`, { method: 'DELETE', headers: { ...svcH, 'Content-Type': 'application/json' }, body: JSON.stringify({ prefixes: [pB] }) });
+rl = spawnSync('node', ['scripts/backup/offsite-restore.mjs', 'restore-files', run.run_prefix], { env: renvL, maxBuffer: 1 << 28 });
+const dB = await fetch(`${API}/storage/v1/object/case-files/${pB}`, { headers: svcH });
+check('restore-files reassembles the segmented file and restores it byte-identically', rl.status === 0 && dB.ok && sha(Buffer.from(await dB.arrayBuffer())) === sha(bigB), rl.stdout.toString() + rl.stderr.toString());
+fs.rmSync(OUTL, { recursive: true, force: true });
 
 console.log('12. token rotation, revocation and expiry');
 const idA = fs.readFileSync(path.join(W, 'token-a.id'), 'utf8').trim();
@@ -425,16 +499,16 @@ check('revoked token A: snapshot refused immediately', s.status === 403, s.statu
 x = await fetch(dlUrl('case-files', firstPath), { headers: tokH(TOKEN) });
 check('revoked token A: file download refused immediately', !x.ok, x.status);
 const objBefore = Object.keys((await simState()).objects).length;
-await runFn(trigger()); run = lastRun();
+await runAll(); run = lastRun();
 check('a runner still holding the revoked token gets nothing (run failed: production_access_denied, nothing uploaded)', run.status === 'failed' && run.error === 'production_access_denied' && Object.keys((await simState()).objects).length === objBefore, run);
-await runFn(trigger(), 'backup', 'http://127.0.0.1:54404/'); run = lastRun();
+await runAll('backup', 'http://127.0.0.1:54404/'); run = lastRun();
 check('the runner with the new token B backs up successfully', run.status === 'succeeded', run);
 sql(`update dlm_backup.runner_tokens set created_at = now() - interval '2 days', expires_at = now() - interval '1 second' where id = '${idB}'`);
 s = await snapshotVia(tokH(TOKEN_B));
 check('expired token B: snapshot refused', s.status === 403, s.status);
 x = await fetch(dlUrl('case-files', firstPath), { headers: tokH(TOKEN_B) });
 check('expired token B: file download refused', !x.ok, x.status);
-await runFn(trigger(), 'backup', 'http://127.0.0.1:54404/'); run = lastRun();
+await runAll('backup', 'http://127.0.0.1:54404/'); run = lastRun();
 check('…and its runner run fails without uploading', run.status === 'failed' && run.error === 'production_access_denied', run);
 const tc = execFileSync('node', ['scripts/backup/runner-token.mjs', path.join(W, 'token-c.txt'), 'local test C']).toString();
 const TOKEN_C = fs.readFileSync(path.join(W, 'token-c.txt'), 'utf8').trim();

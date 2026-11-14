@@ -5,9 +5,11 @@
 --                              'dlm_backup_function_url', 'dlm-backup function URL');
 --
 -- Jobs (times UTC):
---   dlm-backup-daily    02:17 every day     -> function, mode "backup"
---   dlm-backup-verify   04:27 every Sunday  -> function, mode "verify"
---   dlm-backup-health   03:47 every day     -> SQL only: alert row if no success in 26 h
+--   dlm-backup-daily     02:17 every day     -> function, mode "backup"   (starts a run)
+--   dlm-backup-continue  every 3 minutes     -> function, mode "continue" (resumes a run in
+--                        bounded steps; does nothing — one database call — when idle)
+--   dlm-backup-verify    04:27 every Sunday  -> function, mode "verify"   (starts the weekly check)
+--   dlm-backup-health    03:47 every day     -> SQL only: alert row if no success in 26 h
 --
 -- Every invocation carries "x-region: eu-west-2", so Supabase executes the
 -- function in London (it otherwise picks the region closest to the caller). The
@@ -29,5 +31,6 @@ $$;
 revoke all on function dlm_runner.invoke(text) from public, anon, authenticated, service_role;
 
 select cron.schedule('dlm-backup-daily',  '17 2 * * *', $$select dlm_runner.invoke('backup')$$);
+select cron.schedule('dlm-backup-continue', '*/3 * * * *', $$select dlm_runner.invoke('continue')$$);
 select cron.schedule('dlm-backup-verify', '27 4 * * 0', $$select dlm_runner.invoke('verify')$$);
 select cron.schedule('dlm-backup-health', '47 3 * * *', $$select dlm_runner.health()$$);

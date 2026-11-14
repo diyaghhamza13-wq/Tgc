@@ -7,9 +7,13 @@
  *  - AWS Signature V4 verification (header auth), clock-skew check, and
  *    x-amz-content-sha256 verification against the received body
  *    (UNSIGNED-PAYLOAD refused for uploads);
- *  - per-key permissions: put | get | head | list (incl. ListObjectVersions) | delete | admin;
+ *  - per-key permissions: put | get | head | list (incl. ListObjectVersions) | delete | admin |
+ *    retention (lock headers on GET/HEAD, like B2's readFileRetentions);
  *  - versioning (a PUT to an existing key creates a new version);
- *  - If-None-Match: * (412 if the key already exists);
+ *  - If-None-Match: * only when cfg.conditionalWrites is true (default false, like
+ *    Backblaze B2, whose PutObject documentation does not list the header: ignored);
+ *  - like B2's writeFiles capability, a "put" key may HIDE a key (delete marker,
+ *    DELETE without versionId) but never delete a version ("delete" permission);
  *  - object lock in COMPLIANCE mode: each version is retained until
  *    created + lockDays; nobody (not even admin) can delete a locked version;
  *  - lifecycle: versions older than expireDays are deleted, unless locked;
@@ -142,7 +146,7 @@ const server = http.createServer((req, res) => {
     }
     if (req.method === 'PUT') {
       if (!can(keyId, 'put')) return deny('PutObject');
-      if (req.headers['if-none-match'] === '*' && current(key)) { audit.push({ op: 'PutObject', keyId, ok: false, reason: 'PreconditionFailed' }); return send(res, 412, xmlErr('PreconditionFailed')); }
+      if (cfg.conditionalWrites && req.headers['if-none-match'] === '*' && current(key)) { audit.push({ op: 'PutObject', keyId, ok: false, reason: 'PreconditionFailed' }); return send(res, 412, xmlErr('PreconditionFailed')); }
       const v = { versionId: crypto.randomUUID(), body, sha256: sha256(body), md5: crypto.createHash('md5').update(body).digest('hex'), created: now(), retainUntil: now() + cfg.lockDays * DAY };
       store.set(key, [...(store.get(key) ?? []), v]);
       ok('PutObject');
@@ -155,11 +159,12 @@ const server = http.createServer((req, res) => {
       const v = vid ? (store.get(key) ?? []).find((x) => x.versionId === vid && !x.deleteMarker) : current(key);
       if (!v) return send(res, 404, xmlErr('NoSuchKey'));
       ok(req.method === 'GET' ? 'GetObject' : 'HeadObject');
-      return send(res, 200, req.method === 'GET' ? v.body : '', { 'Content-Type': 'application/octet-stream', ETag: `"${v.md5}"`, 'Content-Length': v.body.length, 'x-amz-version-id': v.versionId });
+      const lock = can(keyId, 'retention') ? { 'x-amz-object-lock-mode': 'COMPLIANCE', 'x-amz-object-lock-retain-until-date': new Date(v.retainUntil).toISOString() } : {};
+      return send(res, 200, req.method === 'GET' ? v.body : '', { 'Content-Type': 'application/octet-stream', ETag: `"${v.md5}"`, 'Content-Length': v.body.length, 'x-amz-version-id': v.versionId, ...lock });
     }
     if (req.method === 'DELETE') {
-      if (!can(keyId, 'delete')) return deny('DeleteObject');
       const vid = url.searchParams.get('versionId');
+      if (!can(keyId, 'delete') && !(vid === null && can(keyId, 'put'))) return deny(vid ? 'DeleteObjectVersion' : 'DeleteObject');
       const versions = store.get(key) ?? [];
       if (vid) {
         const v = versions.find((x) => x.versionId === vid);

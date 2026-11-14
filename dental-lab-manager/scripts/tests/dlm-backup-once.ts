@@ -7,6 +7,6 @@ let handler: any;
 (Deno as any).serve = (h: any) => { handler = typeof h === "function" ? h : h.handler; return {}; };
 await import("../../backup-runner/supabase/functions/dlm-backup/index.ts");
 const res = await handler(new Request("http://local/", {
-  method: "POST", headers: { "x-dlm-backup-trigger": Deno.env.get("DLM_TEST_TRIGGER") ?? "", "Content-Type": "application/json" }, body: "{}",
+  method: "POST", headers: { "x-dlm-backup-trigger": Deno.env.get("DLM_TEST_TRIGGER") ?? "", "Content-Type": "application/json" }, body: JSON.stringify({ mode: Deno.env.get("DLM_TEST_MODE") ?? "backup" }),
 }));
 console.log(JSON.stringify({ status: res.status, body: await res.json() }));

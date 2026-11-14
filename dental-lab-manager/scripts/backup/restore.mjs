@@ -30,10 +30,11 @@ if (!file) {
   console.error('usage: restore.mjs backup.json [manifest.json] > restore.sql');
   process.exit(2);
 }
-const b = JSON.parse(fs.readFileSync(file, 'utf8'));
+const raw = fs.readFileSync(file);
+const b = JSON.parse(raw.toString('utf8'));
 if (manifestFile) {
   const m = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
-  const r = await verifyAgainstManifest(b, m, async (bytes) => crypto.createHash('sha256').update(bytes).digest('hex'));
+  const r = await verifyAgainstManifest(b, m, async (bytes) => crypto.createHash('sha256').update(bytes).digest('hex'), raw);
   if (!r.ok) throw new Error(`checksum mismatch for: ${r.problems.join(', ')}`);
   console.error(`manifest verified: ${r.tables} tables`);
 }

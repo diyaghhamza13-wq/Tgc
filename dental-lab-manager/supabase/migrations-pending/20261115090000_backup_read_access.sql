@@ -19,6 +19,8 @@
 --     the snapshot ONLY if the request carries a valid token in the header
 --     x-dlm-backup-token. Read-only (STABLE: PostgREST runs it in a read-only
 --     transaction; the snapshot checks it).
+--   * public.dlm_backup_runner_objects(): same token check, read-only list of
+--     stored objects (id, bucket, path, size, type, version) for the file steps.
 --   * Storage policy dlm_backup_runner_download: with a valid token, the anon
 --     role may DOWNLOAD objects (operation object.get_authenticated) — not list,
 --     not inspect, not sign URLs, not upload, update, move, copy or delete.
@@ -28,6 +30,16 @@
 -- NOT in production any more: pg_net, cron jobs, run bookkeeping, any RPC that
 -- writes. The runner never writes to production.
 -- =============================================================================
+
+-- 0. Pre-check (before any change). Requires Supabase Storage tenant migration 0058 ("operation-ergonomics", storage-api
+-- v1.77+, September 2026), which created storage.allow_only_operation(). Without it,
+-- stop here rather than create a weaker policy.
+do $$
+begin
+  if to_regprocedure('storage.allow_only_operation(text)') is null or to_regprocedure('storage.operation()') is null then
+    raise exception 'storage.allow_only_operation(text) is missing: this Storage version cannot restrict the backup policy to downloads. Migration aborted; nothing was changed.';
+  end if;
+end $$;
 
 -- 1. The read-only backup role (cannot log in) -------------------------------
 create role dlm_backup_reader
@@ -186,6 +198,23 @@ end;
 $$;
 revoke all on function public.dlm_backup_runner_snapshot() from public, anon, authenticated, service_role;
 grant execute on function public.dlm_backup_runner_snapshot() to anon;
+
+-- Current list of stored objects (ids, paths, sizes, versions), token-checked and
+-- read-only: lets the runner's later steps download files without keeping their names.
+create or replace function public.dlm_backup_runner_objects()
+returns json language plpgsql stable security definer set search_path = '' as $$
+begin
+  if not dlm_backup.token_valid() then
+    raise exception 'invalid_token' using errcode = '28000';
+  end if;
+  return (select coalesce(pg_catalog.json_agg(pg_catalog.json_build_object(
+            'id', o.id, 'bucket', o.bucket_id, 'name', o.name, 'size', o.metadata->>'size',
+            'mimetype', o.metadata->>'mimetype', 'version', coalesce(o.updated_at, o.created_at)) order by o.id), '[]'::json)
+          from storage.objects o);
+end;
+$$;
+revoke all on function public.dlm_backup_runner_objects() from public, anon, authenticated, service_role;
+grant execute on function public.dlm_backup_runner_objects() to anon;
 
 -- 5. Storage: download-only with a valid token ---------------------------------
 -- Restricted to the download operation: a broader SELECT policy would also let

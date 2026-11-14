@@ -10,6 +10,7 @@
 -- =============================================================================
 drop policy if exists dlm_backup_runner_download on storage.objects;
 drop function if exists public.dlm_backup_runner_snapshot();
+drop function if exists public.dlm_backup_runner_objects();
 drop function if exists public.dlm_backup_snapshot();
 drop schema if exists dlm_backup cascade;
 alter default privileges for role postgres in schema public revoke select on tables from dlm_backup_reader;

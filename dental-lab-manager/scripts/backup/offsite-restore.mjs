@@ -14,15 +14,16 @@
  *   S3_ENDPOINT=https://… S3_REGION=… S3_BUCKET=… S3_READ_KEY_ID=… S3_READ_SECRET=… \
  *   AGE_IDENTITY=~/dlm-backup-key.txt OUT_DIR=~/restore \
  *   node scripts/backup/offsite-restore.mjs fetch runs/20261114T021700Z-ab12cd34 [--write-plain]
- *       downloads manifest + encrypted snapshot + encrypted file map, checks every
- *       ciphertext SHA-256 against the manifest, decrypts IN MEMORY and verifies all
- *       tables. With --write-plain it also writes OUT_DIR/backup.json for restore.mjs
+ *       downloads manifest + encrypted snapshot + encrypted object list + file map,
+ *       checks every ciphertext SHA-256 against the manifest, decrypts IN MEMORY and
+ *       verifies the snapshot (whole SHA-256 + row counts). With --write-plain it also writes OUT_DIR/backup.json for restore.mjs
  *       (delete it afterwards).
  *
  *   … SUPABASE_URL=… SUPABASE_SERVICE_ROLE_KEY=… \
  *   node scripts/backup/offsite-restore.mjs restore-files runs/…
- *       decrypts the file map, downloads every encrypted file, checks both hashes and
- *       uploads the original file to Supabase Storage (same bucket and path, upsert).
+ *       decrypts the object list + file map, downloads every encrypted segment, checks
+ *       both hashes per segment, reassembles each file and uploads it to Supabase
+ *       Storage (same bucket and path, upsert).
  *
  * Never prints file names, row data or keys (only counts and hashes).
  */
@@ -115,41 +116,63 @@ if (Array.isArray(m.recipients)) {
   if (others) warn(`this run is also encrypted to ${others} other key(s): check they are yours`);
 }
 
+if (m.format !== 'dlm-backup-manifest-v2') die('FAILED: unsupported manifest format (expected dlm-backup-manifest-v2)');
+const getChecked = async (part, what) => {
+  const buf = await getOriginal(part.key, part.version_id, what);
+  if (sha256(buf) !== part.cipher_sha256) die(`FAILED: encrypted ${what} hash differs from the manifest`);
+  return buf;
+};
+// names (objects.json.age) + encrypted copies (files.json.age), joined by object id
+const loadFiles = async (save) => {
+  const objCipher = await getChecked(m.objects, 'object list');
+  const mapCipher = await getChecked(m.filemap, 'file map');
+  if (save) {
+    fs.writeFileSync(path.join(E.OUT_DIR, 'objects.json.age'), objCipher, { mode: 0o600 });
+    fs.writeFileSync(path.join(E.OUT_DIR, 'files.json.age'), mapCipher, { mode: 0o600 });
+  }
+  const objects = new Map(JSON.parse(decrypt(objCipher).toString('utf8')).objects.map((o) => [o.id, o]));
+  const files = JSON.parse(decrypt(mapCipher).toString('utf8')).files;
+  if (objects.size !== m.storage_objects || files.length !== m.storage_objects) die('FAILED: object list / file map size differs from the manifest');
+  return files.map((f) => ({ ...f, ...objects.get(f.id), id: f.id }));
+};
+
 if (cmd === 'fetch') {
-  const db = await getOriginal(m.db.key, m.db.version_id, 'snapshot');
-  if (sha256(db) !== m.db.cipher_sha256) die('FAILED: encrypted snapshot hash differs from the manifest');
-  const map = await getOriginal(m.filemap.key, m.filemap.version_id, 'file map');
-  if (sha256(map) !== m.filemap.cipher_sha256) die('FAILED: encrypted file map hash differs from the manifest');
+  const db = await getChecked(m.db, 'snapshot');
   fs.writeFileSync(path.join(E.OUT_DIR, 'db.json.age'), db, { mode: 0o600 });
-  fs.writeFileSync(path.join(E.OUT_DIR, 'files.json.age'), map, { mode: 0o600 });
   const plain = decrypt(db);
   const b = JSON.parse(plain.toString('utf8'));
-  const r = await verifyAgainstManifest(b, m, async (x) => sha256(x));
+  const r = await verifyAgainstManifest(b, m, async (x) => sha256(x), plain);
   if (!r.ok) die(`FAILED: ${r.problems.join(', ')}`);
-  const files = JSON.parse(decrypt(map).toString('utf8')).files;
-  if (files.length !== m.storage_objects) die('FAILED: file map size differs from the manifest');
+  const files = await loadFiles(true);
+  const gone = files.filter((f) => f.state === 'gone').length;
+  if (gone) warn(`${gone} stored file(s) were deleted in production while this run was copying files (not in this backup)`);
   if (flag === '--write-plain') fs.writeFileSync(path.join(E.OUT_DIR, 'backup.json'), plain, { mode: 0o600 });
   plain.fill(0);
   console.log(`OK: ${r.tables} tables, ${r.rows} rows, ${files.length} stored files listed, exported ${m.exported_at}${flag === '--write-plain' ? ' (backup.json written: delete it after restoring)' : ''}${warnings.length ? ` — ${warnings.length} warning(s)` : ''}`);
 } else {
   if (!E.SUPABASE_URL || !E.SUPABASE_SERVICE_ROLE_KEY) die('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required');
-  const map = await getOriginal(m.filemap.key, m.filemap.version_id, 'file map');
-  if (sha256(map) !== m.filemap.cipher_sha256) die('FAILED: encrypted file map hash differs from the manifest');
-  const files = JSON.parse(decrypt(map).toString('utf8')).files;
+  const files = await loadFiles(false);
   let ok = 0;
-  for (const f of files) {
-    const cipher = await getOriginal(f.backup_key, f.version_id, `file ${f.id}`);
-    if (sha256(cipher) !== f.cipher_sha256) die(`FAILED: ciphertext hash mismatch for object ${f.id}`);
-    const plain = decrypt(cipher);
-    if (sha256(plain) !== f.sha256) die(`FAILED: plaintext hash mismatch for object ${f.id}`);
+  const restorable = files.filter((f) => f.state === 'done');
+  for (const f of restorable) {
+    const parts = [];
+    for (const s of f.segments) {
+      const cipher = await getOriginal(s.backup_key, s.version_id, `file ${f.id} segment ${s.seq}`);
+      if (sha256(cipher) !== s.cipher_sha256) die(`FAILED: ciphertext hash mismatch for object ${f.id} segment ${s.seq}`);
+      const plain = decrypt(cipher);
+      if (sha256(plain) !== s.plain_sha256 || plain.length !== Number(s.bytes)) die(`FAILED: plaintext hash mismatch for object ${f.id} segment ${s.seq}`);
+      parts.push(plain);
+    }
+    const body = Buffer.concat(parts);
+    if (body.length !== Number(f.size) || (f.sha256 && sha256(body) !== f.sha256)) die(`FAILED: reassembled object ${f.id} differs from the recorded size/hash`);
     const res = await fetch(`${E.SUPABASE_URL.replace(/\/$/, '')}/storage/v1/object/${encodeURIComponent(f.bucket)}/${f.name.split('/').map(encodeURIComponent).join('/')}`, {
       method: 'POST',
       headers: { apikey: E.SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${E.SUPABASE_SERVICE_ROLE_KEY}`, 'x-upsert': 'true', 'Content-Type': f.mimetype || 'application/octet-stream' },
-      body: plain,
+      body,
     });
     if (!res.ok) die(`FAILED: storage upload for object ${f.id}: HTTP ${res.status}`);
-    plain.fill(0);
+    body.fill(0); for (const p of parts) p.fill(0);
     ok++;
   }
-  console.log(`OK: ${ok}/${files.length} stored files restored (both hashes verified)${warnings.length ? ` — ${warnings.length} warning(s)` : ''}`);
+  console.log(`OK: ${ok}/${restorable.length} stored files restored (all segment hashes verified)${warnings.length ? ` — ${warnings.length} warning(s)` : ''}`);
 }

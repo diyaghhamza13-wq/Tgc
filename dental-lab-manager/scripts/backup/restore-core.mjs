@@ -4,11 +4,23 @@
  * No Node or browser APIs here: hashing and randomness are injected.
  */
 
-/** Checks a decrypted backup against its manifest. sha256hex: async (Uint8Array) => hex. */
-export async function verifyAgainstManifest(b, m, sha256hex) {
+/**
+ * Checks a decrypted backup against its manifest. sha256hex: async (Uint8Array) => hex.
+ * Manifest v2 (automated runner): SHA-256 of the whole decrypted snapshot (plainBytes,
+ * the exact decrypted bytes) + row count per table. Manifest v1: SHA-256 per table.
+ */
+export async function verifyAgainstManifest(b, m, sha256hex, plainBytes = null) {
   if (b?.format !== 'dlm-backup-v1') throw new Error('not a dlm-backup-v1 file');
   const enc = new TextEncoder();
   const problems = [];
+  if (m?.format === 'dlm-backup-manifest-v2') {
+    if (!plainBytes || (await sha256hex(plainBytes)) !== m.db?.plain_sha256) problems.push('snapshot_sha256');
+    for (const [t, want] of Object.entries(m.tables ?? {})) if (!Array.isArray(b.data?.[t]) || b.data[t].length !== want.rows) problems.push(t);
+    if (Object.keys(m.tables ?? {}).length !== (b.tables_in_snapshot ?? []).length) problems.push('tables');
+    if (JSON.stringify(b.migrations) !== JSON.stringify(m.migrations)) problems.push('migrations');
+    const rows = Object.values(m.tables ?? {}).reduce((s, t) => s + t.rows, 0);
+    return { ok: problems.length === 0, problems, tables: Object.keys(m.tables ?? {}).length, rows };
+  }
   for (const [t, want] of Object.entries(m.tables ?? {})) {
     const rows = b.data?.[t];
     const sha = rows ? await sha256hex(enc.encode(JSON.stringify(rows))) : null;

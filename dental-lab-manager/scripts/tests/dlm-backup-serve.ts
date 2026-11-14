@@ -10,7 +10,18 @@ const realServe = Deno.serve;
 // deno-lint-ignore no-explicit-any
 (Deno as any).serve = (h: any) => { handler = typeof h === "function" ? h : h.handler; return {}; };
 await import("../../backup-runner/supabase/functions/dlm-backup/index.ts");
-realServe({ port, hostname: "0.0.0.0", onListen: () => console.log(`dlm-backup test server on :${port}`) }, (req) => {
+// Memory sampling per request (test only): peak V8 heap + external buffers (ArrayBuffers),
+// the memory an Edge Function worker is limited on.
+realServe({ port, hostname: "0.0.0.0", onListen: () => console.log(`dlm-backup test server on :${port}`) }, async (req) => {
   console.log(`test-serve: request x-region=${req.headers.get("x-region") ?? "none"}`);
-  return handler(req);
+  // deno-lint-ignore no-explicit-any
+  (globalThis as any).gc?.();
+  let peakHeap = 0, peakExt = 0, peakSum = 0;
+  const sample = () => { const m = Deno.memoryUsage(); peakHeap = Math.max(peakHeap, m.heapUsed); peakExt = Math.max(peakExt, m.external); peakSum = Math.max(peakSum, m.heapUsed + m.external); };
+  const t = setInterval(sample, 5);
+  try { return await handler(req); } finally {
+    sample(); clearInterval(t);
+    const mb = (b: number) => (b / 1048576).toFixed(0);
+    console.log(`test-serve: memory peakHeapMB=${mb(peakHeap)} peakExternalMB=${mb(peakExt)} peakHeapPlusExternalMB=${mb(peakSum)}`);
+  }
 });
